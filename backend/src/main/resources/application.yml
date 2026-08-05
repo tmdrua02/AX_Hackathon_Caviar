@@ -1,0 +1,52 @@
+spring:
+  application:
+    name: medassist-backend
+
+server:
+  port: 8080
+  error:
+    include-message: never
+    include-stacktrace: never
+
+medassist:
+  public-data:
+    drug-product:
+      base-url: https://apis.data.go.kr/1471000/DrugPrdtPrmsnInfoService07
+      service-key: ${DATA_GO_KR_SERVICE_KEY:}
+      service-key-encoded: ${DATA_GO_KR_SERVICE_KEY_ENCODED:true}
+      search-operation-path: /getDrugPrdtPrmsnInq07
+      ingredient-operation-path: /getDrugPrdtMcpnDtlInq07
+      page-size: 20
+      # TODO: 공공데이터포털 Swagger 명세 확인 필요.
+      # 아래 값은 실제 Swagger 응답/요청 필드명을 확인한 뒤 환경변수로 설정한다.
+      mapping:
+        search-items-json-pointer: ${DRUG_API_SEARCH_ITEMS_JSON_POINTER:}
+        ingredient-items-json-pointer: ${DRUG_API_INGREDIENT_ITEMS_JSON_POINTER:}
+        product-code-field: ${DRUG_API_PRODUCT_CODE_FIELD:}
+        product-name-field: ${DRUG_API_PRODUCT_NAME_FIELD:}
+        manufacturer-field: ${DRUG_API_MANUFACTURER_FIELD:}
+        ingredient-product-code-parameter: ${DRUG_API_INGREDIENT_PRODUCT_CODE_PARAMETER:}
+        ingredient-code-field: ${DRUG_API_INGREDIENT_CODE_FIELD:}
+        ingredient-display-name-field: ${DRUG_API_INGREDIENT_DISPLAY_NAME_FIELD:}
+        ingredient-korean-name-field: ${DRUG_API_INGREDIENT_KOREAN_NAME_FIELD:}
+        ingredient-english-name-field: ${DRUG_API_INGREDIENT_ENGLISH_NAME_FIELD:}
+        ingredient-amount-field: ${DRUG_API_INGREDIENT_AMOUNT_FIELD:}
+        ingredient-unit-field: ${DRUG_API_INGREDIENT_UNIT_FIELD:}
+      policy:
+        connect-timeout: 2s
+        read-timeout: 5s
+        max-attempts: 2
+        initial-backoff: 300ms
+        circuit-failure-threshold: 5
+        circuit-open-duration: 30s
+        max-concurrent-calls: 8
+        requests-per-second: 5
+    cache:
+      positive-search-ttl: 6h
+      negative-search-ttl: 5m
+      ingredient-ttl: 24h
+      maximum-size: 1000
+  matching:
+    auto-selection-score: 95
+    minimum-score-gap: 10
+    maximum-candidates: 5
