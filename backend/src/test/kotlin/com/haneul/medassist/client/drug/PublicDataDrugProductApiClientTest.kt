@@ -20,6 +20,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import tools.jackson.databind.ObjectMapper
 import java.time.Duration
+import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
@@ -85,11 +86,52 @@ class PublicDataDrugProductApiClientTest {
 
     @Test
     fun `successful empty product response is not treated as provider failure`() {
-        server.enqueue(jsonResponse("""{"header":{"resultCode":"00"},"body":{"items":[]}}"""))
+        server.enqueue(
+            jsonResponse(
+                """{"header":{"resultCode":"00","resultMsg":"NORMAL SERVICE."},"body":{"pageNo":1,"numOfRows":20,"totalCount":0}}""",
+            ),
+        )
 
         val result = client(properties).searchProducts("없는제품")
 
         assertTrue(result.products.isEmpty())
+    }
+
+    @Test
+    fun `findProduct uses exact item sequence detail lookup`() {
+        server.enqueue(jsonResponse(productSearchBody()))
+
+        val product = client(properties).findProduct("P-1")
+
+        assertEquals("P-1", product?.productCode)
+        assertEquals("타이레놀정500밀리그람", product?.productName)
+        val request = server.takeRequest()
+        assertEquals(properties.detailOperationPath, request.requestUrl?.encodedPath)
+        assertEquals("P-1", request.requestUrl?.queryParameter("item_seq"))
+    }
+
+    @Test
+    fun `findProduct returns null only for normal empty detail response`() {
+        server.enqueue(
+            jsonResponse(
+                """{"header":{"resultCode":"00","resultMsg":"NORMAL SERVICE."},"body":{"pageNo":1,"numOfRows":20,"totalCount":0}}""",
+            ),
+        )
+
+        assertNull(client(properties).findProduct("P-404"))
+    }
+
+    @Test
+    fun `findProduct rejects detail record for another product code`() {
+        server.enqueue(
+            jsonResponse(
+                """{"header":{"resultCode":"00","resultMsg":"NORMAL SERVICE."},"body":{"items":[{"ITEM_SEQ":"OTHER","ITEM_NAME":"다른제품","ENTP_NAME":"다른업체"}]}}""",
+            ),
+        )
+
+        val failure = capturePublicDataFailure { client(properties).findProduct("P-1") }
+
+        assertEquals(ApiErrorCode.PUBLIC_API_RESPONSE_MISMATCH, failure.errorCode)
     }
 
     @Test
@@ -115,6 +157,93 @@ class PublicDataDrugProductApiClientTest {
         }
 
         assertEquals(ApiErrorCode.PUBLIC_API_INVALID_RESPONSE, exception.errorCode)
+    }
+
+    @Test
+    fun `http 401 maps to authentication failure without retry or request URI exposure`() {
+        assertHttpFailure(
+            statusCode = 401,
+            expectedError = ApiErrorCode.PUBLIC_API_AUTH_FAILED,
+            maxRetries = 2,
+            expectedRequestCount = 1,
+        )
+    }
+
+    @Test
+    fun `http 403 maps to authentication failure without retry or request URI exposure`() {
+        assertHttpFailure(
+            statusCode = 403,
+            expectedError = ApiErrorCode.PUBLIC_API_AUTH_FAILED,
+            maxRetries = 2,
+            expectedRequestCount = 1,
+        )
+    }
+
+    @Test
+    fun `http 429 retries only to configured limit and remains a provider error`() {
+        assertHttpFailure(
+            statusCode = 429,
+            expectedError = ApiErrorCode.PUBLIC_API_QUOTA_EXCEEDED,
+            maxRetries = 2,
+            expectedRequestCount = 3,
+            retryAfterSeconds = 1,
+        )
+    }
+
+    @Test
+    fun `read timeout retries only to configured limit and opens circuit after final failure`() {
+        properties.client.readTimeout = Duration.ofMillis(50)
+        properties.client.maxRetries = 1
+        properties.client.retryBackoff = Duration.ZERO
+        properties.client.circuitFailureThreshold = 1
+        repeat(2) {
+            server.enqueue(
+                jsonResponse(productSearchBody()).setHeadersDelay(300, TimeUnit.MILLISECONDS),
+            )
+        }
+        val client = client(properties)
+
+        val timeout = capturePublicDataFailure { client.searchProducts("제품") }
+
+        assertEquals(ApiErrorCode.PUBLIC_API_TIMEOUT, timeout.errorCode)
+        assertEquals(2, server.requestCount)
+        assertNoRequestDetails(timeout)
+
+        val circuitOpen = capturePublicDataFailure { client.searchProducts("제품") }
+
+        assertEquals(ApiErrorCode.PUBLIC_API_CIRCUIT_OPEN, circuitOpen.errorCode)
+        assertEquals(2, server.requestCount)
+        assertNoRequestDetails(circuitOpen)
+    }
+
+    @Test
+    fun `http 502 retries only to configured limit and remains unavailable`() {
+        assertHttpFailure(
+            statusCode = 502,
+            expectedError = ApiErrorCode.PUBLIC_API_UNAVAILABLE,
+            maxRetries = 2,
+            expectedRequestCount = 3,
+        )
+    }
+
+    @Test
+    fun `http 503 retries only to configured limit and remains unavailable`() {
+        assertHttpFailure(
+            statusCode = 503,
+            expectedError = ApiErrorCode.PUBLIC_API_UNAVAILABLE,
+            maxRetries = 2,
+            expectedRequestCount = 3,
+        )
+    }
+
+    @Test
+    fun `http 504 retries only to configured limit and remains unavailable`() {
+        assertHttpFailure(
+            statusCode = 504,
+            expectedError = ApiErrorCode.PUBLIC_API_UNAVAILABLE,
+            maxRetries = 2,
+            expectedRequestCount = 3,
+        )
     }
 
     @Test
@@ -278,6 +407,51 @@ class PublicDataDrugProductApiClientTest {
             mapper = DrugProductApiMapper(properties, IngredientNormalizer()),
             callExecutor = PublicDataCallExecutor(properties.client),
         )
+
+    private fun assertHttpFailure(
+        statusCode: Int,
+        expectedError: ApiErrorCode,
+        maxRetries: Int,
+        expectedRequestCount: Int,
+        retryAfterSeconds: Long? = null,
+    ) {
+        properties.client.maxRetries = maxRetries
+        properties.client.retryBackoff = Duration.ZERO
+        repeat(expectedRequestCount) {
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(statusCode)
+                    .setHeader("Content-Type", "application/json")
+                    .apply {
+                        retryAfterSeconds?.let { setHeader("Retry-After", it) }
+                    },
+            )
+        }
+
+        val exception = capturePublicDataFailure { client(properties).searchProducts("제품") }
+
+        assertEquals(expectedError, exception.errorCode)
+        assertEquals(expectedRequestCount, server.requestCount)
+        assertNoRequestDetails(exception)
+    }
+
+    private fun capturePublicDataFailure(call: () -> Unit): PublicDataApiException = try {
+        call()
+        fail("expected public data API failure")
+    } catch (exception: PublicDataApiException) {
+        exception
+    }
+
+    private fun assertNoRequestDetails(exception: Throwable) {
+        val messages = generateSequence(exception) { it.cause }
+            .mapNotNull { it.message }
+            .joinToString(" ")
+
+        assertFalse(messages.contains("serviceKey", ignoreCase = true))
+        assertFalse(messages.contains(properties.baseUrl, ignoreCase = true))
+        assertFalse(messages.contains(properties.searchOperationPath, ignoreCase = true))
+        assertFalse(messages.contains("abc%2Fdef", ignoreCase = true))
+    }
 
     private fun properties(baseUrl: String) = DrugProductApiProperties(
         baseUrl = baseUrl,

@@ -16,3 +16,9 @@
 - 공공 API 응답은 먼저 byte 배열로 받고 엄격한 charset decoder를 통과시킨다. 디코딩 오류나 replacement character를 정상 의료 데이터로 저장하지 않는다.
 - JSON 응답에 charset이 없을 때만 UTF-8 기본값을 사용한다. EUC-KR이나 CP949를 실측 없이 추측해 고정하지 않는다.
 - 실제 운영 응답의 `Content-Type` 및 charset 헤더는 서비스키가 준비된 수동 통합 테스트에서 확인한다.
+- 이미 percent-encoded된 서비스키는 `ServiceKeyEncoder`에서 decode 후 정확히 한 번 encode하고, URI는 `build(true)`로 조립한다. `%2F`를 `%252F`로 만드는 form-style 재인코딩과 `build(false)`를 사용하지 않는다.
+- DUR과 e약은요는 제품 허가정보와 credentials만 공유하고 각각 별도 `RestClient`와 `PublicDataCallExecutor`를 사용해 장애·circuit 상태를 격리한다.
+- opt-in 외부 API 테스트는 인증값과 전체 URI/query string 및 전체 provider 응답을 테스트 리포트에 기록하지 않는다.
+- e약은요의 `efcyQesitm` 등 공식 의료 텍스트는 원문을 보존하며 HTML 표시 정제 과정에서 요약하거나 의료 의미를 바꾸지 않는다.
+- 정상 빈 응답만 negative cache할 수 있고 인증·quota·timeout·provider·인코딩 오류는 캐시하지 않는다.
+- 건강기능식품 제품 기본정보를 원재료 또는 상호작용 근거로 승격하지 않으며, 미조회 원재료를 빈 목록인 것처럼 기록하지 않는다.

@@ -6,6 +6,6 @@ object PublicDataLogSanitizer {
     fun mask(message: String): String = message.replace(serviceKeyPattern, "\$1***")
 
     fun sanitizedCause(cause: Throwable): RuntimeException = RuntimeException(
-        "${cause.javaClass.simpleName}: ${mask(cause.message.orEmpty())}".trimEnd(),
+        "Public data API request failed (${cause.javaClass.simpleName})",
     )
 }

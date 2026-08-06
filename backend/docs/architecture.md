@@ -11,13 +11,18 @@ flowchart LR
     N --> M["DrugProductMatcher"]
     M --> P["식약처 제품 허가정보 API"]
     M --> C["Caffeine 캐시"]
+    B --> E["e약은요 Overview Client"]
+    E --> C
+    B --> H["건강기능식품 Provider"]
+    H -. "정상 NOT_FOUND만" .-> S["SupplementSearchIndex fallback"]
+    S --> C
     B --> I["성분 비교 서비스"]
-    I --> D["DUR Client · 현재 명세 미확인"]
+    I -. "최종 판정 연결 보류" .-> D["DUR 병용금기 조회 Client · 구현 완료"]
     L["선택적 LLM · 현재 비활성"] -. "검색어 힌트만" .-> N
     L -. "제품·성분·판정 생성 금지" .-> B
 ```
 
-LLM 경계는 현재 구현하지 않았습니다. 추후 추가하더라도 출력 타입은 검색 문자열 힌트로 제한하고 `VerifiedDrugProduct`나 `Ingredient`를 생성할 수 없게 분리합니다.
+LLM 경계는 현재 구현하지 않았습니다. 추후에도 `EvidencePresentationRequest`처럼 backend가 확정한 근거만 입력받는 설명 생성기로 제한하며, 제품·성분·DUR·supplement rule 또는 최종 판정을 생성하거나 변경할 수 없습니다.
 
 ## 제품 검색 흐름
 
@@ -51,6 +56,7 @@ sequenceDiagram
 - 검색 성공: 6시간
 - 검색 성공 빈 결과: 5분
 - 성분 성공: 24시간
+- e약은요 정상 결과: 24시간, 정상 미제공: 기존 짧은 negative TTL
 - 인증·quota·timeout·파싱 오류: 캐시하지 않음
 - 운영 버전에서는 `DrugProductCache` 경계를 Redis 구현으로 교체 가능
 
@@ -61,9 +67,80 @@ sequenceDiagram
 - `PublicDataCallExecutorFactory`: 정책마다 독립 executor를 생성
 - API별 executor: rate-limit window, bulkhead semaphore, circuit failure count/open time을 서로 공유하지 않음
 
-현재 Spring context에는 구현된 제품 허가정보용 `drugProductCallExecutor`만 있습니다. 이후 DUR 성분정보, 건강기능식품 제품정보, 건강기능식품 품목제조신고 원재료정보를 추가할 때 같은 factory로 각각 별도 executor를 생성합니다. retry는 실행기 호출 안에서만 관리되며 다른 API 상태에 영향을 주지 않습니다. 공통 계정 quota용 전역 rate limiter는 후속 검토 사항입니다.
+현재 Spring context에는 제품 허가정보용 `drugProductCallExecutor`, DUR용 `durCallExecutor`, e약은요용 `drugOverviewCallExecutor`, 건강기능식품용 `healthFunctionalFoodCallExecutor`가 각각 존재합니다. 각 인스턴스의 rate-limit window, bulkhead, circuit failure 상태는 공유하지 않습니다. 공통 계정 quota용 전역 rate limiter는 후속 검토 사항입니다.
 
-DUR과 두 건강기능식품 API의 실제 operation은 아직 구현하지 않았습니다. 공식 Swagger가 없는 operation path, 요청변수, 응답 필드는 추측하여 추가하지 않습니다.
+DUR 병용금기 operation은 실제 curl과 현재 Spring 전송 경로에서 HTTP 200으로 검증했습니다. opt-in 외부 통합 테스트에서 `resultCode=00`, `totalCount=19`, 고유 관계 성분코드 19개와 strict UTF-8을 확인했습니다. 이미 인코딩된 키를 form-style로 다시 인코딩하면 같은 요청이 HTTP 403이 되는 회귀 조건도 분리해 확인했습니다.
+
+## e약은요 어댑터
+
+- `GET /getDrbEasyDrugList`, 인증 변수는 대문자 `ServiceKey`
+- 먼저 `itemSeq`로 정확 조회하고 정상 0건일 때만 `itemName`과 선택적 `entpName`으로 fallback
+- `/body/items`는 record의 직접 배열이며 모든 페이지에서 입력 품목기준코드 재검증
+- `efcyQesitm`, `useMethodQesitm`, 경고·주의·상호작용·부작용·보관 필드는 공식 원문과 의미를 바꾸지 않은 표시용 텍스트를 함께 보존
+- 정상 `resultCode=00`, `totalCount=0`, items 생략 또는 빈 배열만 `NOT_FOUND`; provider 실패는 `FAILED`, 중간 실패는 `PARTIAL`
+- e약은요 미제공은 제품이나 효능 부재가 아니고 기존 medication/ingredient를 변경하지 않음
+
+## 건강기능식품 제품정보 경계
+
+`HtfsInfoService03` provider는 목록 `/getHtfsList01`과 상세 `/getHtfsItem01`을 독립 RestClient/executor로 호출합니다. 공식 포털 Swagger에는 pagination·인증·형식만 노출되어 있지만 실제 gateway에서 목록 `Prduct`·`Entrps`·`Sttemnt_no`, 상세 `STTEMNT_NO` 필터를 검증했습니다. `Product`는 실제로 필터되지 않아 사용하지 않습니다.
+
+응답은 `/body/items[*]/item`을 매핑하고 모든 페이지가 성공해야 `complete=true`입니다. 정상 `resultCode=00`, `totalCount=0`, items 생략만 `NOT_FOUND`이며 중간 실패는 `PARTIAL`, 인증·quota·timeout·provider 오류는 `FAILED`입니다. 상세 snapshot은 공식 확인된 필드와 raw provider record만 보존합니다.
+
+향후 `SupplementEvidenceBundle`은 제품을 조회하더라도 `rawMaterialStatus=NOT_IMPLEMENTED`, 원재료는 `NotRequested`, `ruleEvidence=NOT_EVALUATED`, `coverage.complete=false`를 유지합니다. DUR은 약–약 병용금기 전용이고 건강기능식품을 DUR 성분코드와 직접 비교하지 않습니다.
+
+### C003 원재료 데이터 경계
+
+건강기능식품 품목제조신고(원재료)는 `HtfsInfoService03`의 하위 operation이 아니라 별도 식품안전나라 `C003` 서비스입니다. 인증도 공통 `DATA_GO_KR_SERVICE_KEY` query가 아니라 식품안전나라에서 발급한 `keyId` 경로 segment를 사용하고, pagination은 `pageNo`/`numOfRows`가 아닌 `startIdx`/`endIdx`입니다. 그러므로 기존 건강기능식품 제품용 credentials, URI factory, executor에 억지로 결합하지 않습니다.
+
+공식 출력은 제품별 `PRDLST_REPORT_NO`와 단일 `RAWMTRL_NM` 문자열만 제공하며 구조화 원재료 record, 원재료 코드, 구분, 함량, 단위, 배합비, 순번은 제공하지 않습니다. 상세 하위 원재료와 배합비도 제공 범위에서 제외됩니다. 안전한 record 경계를 확인하기 전에는 문자열을 분해하거나 이름으로 의미를 추론하지 않으며, 원재료 adapter와 evidence 연결은 구현하지 않습니다. 규칙 DB가 없으므로 이후 원재료 근거가 확보되더라도 전체 supplement coverage는 자동으로 완전해지지 않습니다.
+
+## 건강기능식품 검색 인덱스
+
+```mermaid
+sequenceDiagram
+    participant U as 사용자
+    participant A as Supplement Search API
+    participant N as SupplementNameNormalizer
+    participant P as HealthFunctionalFood Provider
+    participant I as SupplementSearchIndex
+
+    U->>A: 제품명 query
+    A->>N: 공백·괄호·특수문자 제거, 영문 소문자화
+    A->>P: Prduct + optional Entrps
+    alt provider RESOLVED
+        P-->>A: exact / prefix / contains 공식 후보
+    else provider NOT_FOUND
+        A->>I: normalized query fallback
+        I-->>A: index 후보
+    else provider FAILED/PARTIAL
+        P-->>A: 실패 또는 불완전 상태
+    end
+    A-->>U: STTEMNT_NO와 공식 snapshot metadata
+```
+
+현재 loader는 빈 메모리 snapshot을 공급하며 provider의 정상 `NOT_FOUND`에서만 사용됩니다. 동일 `STTEMNT_NO`는 최초 한 건만 유지하고 query 결과는 Caffeine에 캐시합니다. provider 오류는 fallback이나 정상 캐시 대상이 아닙니다.
+
+향후 loader를 DB, CSV, 공공데이터 전체 동기화 또는 Elasticsearch 구현으로 교체해도 검색 서비스 경계는 유지합니다. 상세 provider는 `findByStatementNo` 서비스 경계로 구현했지만 public 상세 endpoint는 추가하지 않았습니다.
+
+## 약–건강기능식품 판정 파이프라인
+
+```mermaid
+flowchart LR
+    MP["공식 ITEM_SEQ"] --> MR["제품 상세 + 전체 공식 주성분"]
+    SP["공식 STTEMNT_NO"] --> SR["건강기능식품 상세"]
+    SR --> VM["VERIFIED 제품–canonical 원료 매핑"]
+    MR --> CP["약 성분 × canonical 원료"]
+    VM --> CP
+    CP --> VR["VERIFIED supplement rule repository"]
+    VR --> EV["Evidence + immutable decision + coverage"]
+    EV -. "설명 DTO만" .-> LLM["LLM presentation layer · 미구현"]
+```
+
+`SupplementInteractionAnalysisService`는 공식 약 제품과 전체 성분, 공식 건강기능식품 snapshot, 현재 유효한 VERIFIED 매핑을 확인한 뒤 전체 Cartesian pair를 평가합니다. `AVOID_COMBINATION`이 `CAUTION`보다 우선하며, 위험 규칙이 확인된 경우 다른 pair 실패가 있어도 확인된 위험은 유지하되 coverage와 processing status는 불완전하게 표시합니다.
+
+모든 입력과 pair가 완전하고 rule repository가 정상인데 일치 규칙만 없을 때 `NO_VERIFIED_RULE_FOUND`입니다. 제품 미확인, 공식 성분코드 누락, 검수 매핑 부재, repository 실패 또는 pair 실패는 `UNKNOWN`입니다. DUR adapter는 계속 약–약 전용이며 supplement product/canonical ID를 전달하지 않습니다.
+
+현재 repository 구현은 교체 가능한 네 interface와 JSON startup loader입니다. production `supplement-interaction-rules.json`은 빈 배열만 포함합니다. 검수 데이터는 source → canonical ingredient → product mapping/rule 참조 무결성, VERIFIED source, 유효기간, 중복 활성 규칙을 통과해야 시작됩니다. 향후 동일 interface 뒤에 관리형 DB를 연결할 수 있습니다.
 
 ## 의약품 허가정보 어댑터
 
@@ -74,6 +151,46 @@ DUR과 두 건강기능식품 API의 실제 operation은 아직 구현하지 않
 - 페이지 하나라도 실패하거나 전체 items 수가 `totalCount`와 다르면 성공 결과를 만들지 않음
 - 응답 제품이 선택 제품과 일치하지 않으면 `PUBLIC_API_RESPONSE_MISMATCH`로 격리
 - 원본 byte를 JSON charset 미지정 시 UTF-8로 엄격 디코딩하며 손실 문자를 허용하지 않음
+
+## DUR 병용금기 어댑터
+
+확인된 병용금기 경계는 Base URL과 `GET /getUsjntTabooInfoList02`이며, 현재 성공 샘플은 기준 성분 A를 `ingrCode`/`ingrKorName`으로 요청해 `INGR_CODE` 기준의 `MIXTURE_INGR_CODE` 관계 레코드 목록을 반환하는 형태입니다. A와 B를 동시에 요청하는 변수와 데이터 방향 대칭성은 확인되지 않았습니다.
+
+구현은 raw byte를 공통 strict decoder로 처리하고 U+FFFD를 거부한 뒤 `resultCode`, 페이지 메타데이터, 중첩 `items[*].item`, `TYPE_NAME`, 기준 코드와 관계 코드를 검증합니다. `totalCount=0`이고 정상 resultCode이며 items가 생략되거나 빈 배열인 경우만 완전한 `NO_MATCH` 후보로 반환합니다. provider 오류 또는 중간 페이지 실패는 `FAILED`/`PARTIAL`이고 `complete=false`입니다.
+
+```mermaid
+sequenceDiagram
+    participant C as IngredientComparisonService
+    participant D as DUR Provider Lookup Adapter
+    participant P as 식약처 DUR API
+
+    C-. "현재 연결 보류" .->D: 향후 공식 성분코드 A, B
+    D->>P: 기준 성분 A 조회
+    loop A 응답의 모든 페이지
+        P-->>D: items[*].item 관계 레코드
+    end
+    D->>P: 기준 성분 B 역방향 조회 후보
+    loop B 응답의 모든 페이지
+        P-->>D: items[*].item 관계 레코드
+    end
+    D->>D: 공식 코드 일치·방향·완전성 검증
+    D-->>C: 근거 또는 incomplete/failure
+```
+
+- 기준 성분 코드: `INGR_CODE`; 관계 성분 공식 코드: `MIXTURE_INGR_CODE`
+- 관계는 결합 문자열이 아니라 `/body/items/*/item`의 개별 레코드로 처리
+- `totalCount`/`numOfRows` 기반 모든 페이지 수집이 완료돼야 한 방향 조회가 complete
+- 공식 방향성 확인 전에는 양방향 완전 조회를 안전한 후보로 유지
+- 어느 방향이든 공식 관계가 확인되면 해당 방향의 원본 근거를 보존
+- 관계 없음은 양방향·모든 페이지 성공과 실제 0건 명세가 확인된 뒤에만 판정 후보
+- 중간 페이지 실패, 응답 기준코드 불일치, 비정상 resultCode, 손실 인코딩은 실패 또는 incomplete
+- 공식 record ID가 확인되지 않아 evidence의 `sourceRecordId`는 nullable 후보이며 내부 식별자를 공식 번호로 표시하지 않음
+- 공식 record ID는 제공 필드에서 확인되지 않아 `providerRecordId=null`을 유지
+- 내부 중복 제거 키 `(INGR_CODE, MIXTURE_INGR_CODE, NOTIFICATION_DATE, TYPE_NAME, PROHBT_CONTENT)`는 공식 DUR ID가 아님
+- `DurLookupService`는 검증되지 않은 코드 단독 조회를 거부하고 코드와 한글명이 모두 있는 요청만 provider client에 전달
+- `InteractionCheck` 성분쌍 판정은 아직 연결하지 않아 `check` 경계의 `DUR_SCHEMA_UNVERIFIED`를 유지
+
+다음 단계 진행 조건은 A→B/B→A 방향성 정책, 삭제 레코드 판정 정책, evidence 변환을 별도로 승인한 뒤 InteractionCheck 통합 테스트를 추가하는 것입니다.
 
 ## 비동기 분석 방향
 

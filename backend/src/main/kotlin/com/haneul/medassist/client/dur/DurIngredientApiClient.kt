@@ -2,23 +2,43 @@ package com.haneul.medassist.client.dur
 
 import com.haneul.medassist.domain.interaction.Evidence
 import com.haneul.medassist.domain.medication.Ingredient
-import org.springframework.stereotype.Component
+import java.time.Instant
 
 interface DurIngredientApiClient {
-    fun check(left: Ingredient, right: Ingredient): DurLookupResult
+    fun lookup(request: DurLookupRequest): DurLookupResult = DurLookupResult(
+        status = DurLookupStatus.FAILED,
+        records = emptyList(),
+        totalCount = null,
+        completedPages = emptyList(),
+        failedPages = emptyList(),
+        complete = false,
+        retrievedAt = Instant.now(),
+        errorCode = DUR_SCHEMA_UNVERIFIED,
+    )
+
+    fun findContraindications(
+        ingredientCode: String,
+        ingredientKoreanName: String?,
+    ): DurLookupResult = lookup(
+        DurLookupRequest(
+            ingredientCode = ingredientCode,
+            ingredientKoreanName = ingredientKoreanName,
+            lookupDirection = DurLookupDirection.FORWARD,
+        ),
+    )
+
+    /** InteractionCheck 연결은 별도 검증과 승인 전까지 안전 실패 상태를 유지한다. */
+    fun check(left: Ingredient, right: Ingredient): DurPairLookupResult =
+        DurPairLookupResult.Failure(DUR_SCHEMA_UNVERIFIED)
+
+    companion object {
+        const val DUR_SCHEMA_UNVERIFIED = "DUR_SCHEMA_UNVERIFIED"
+    }
 }
 
-sealed interface DurLookupResult {
-    data class Prohibited(val evidence: List<Evidence>) : DurLookupResult
-    data class Caution(val evidence: List<Evidence>) : DurLookupResult
-    data object NoMatch : DurLookupResult
-    data class Failure(val safeErrorCode: String) : DurLookupResult
-}
-
-@Component
-class SwaggerUnverifiedDurIngredientApiClient : DurIngredientApiClient {
-    override fun check(left: Ingredient, right: Ingredient): DurLookupResult =
-        // TODO: 공공데이터포털 Swagger 명세 확인 필요.
-        // operation path, 성분코드 요청변수, 관계성분 방향성을 확인하기 전에는 외부 결과를 만들지 않는다.
-        DurLookupResult.Failure("DUR_SCHEMA_UNVERIFIED")
+sealed interface DurPairLookupResult {
+    data class Prohibited(val evidence: List<Evidence>) : DurPairLookupResult
+    data class Caution(val evidence: List<Evidence>) : DurPairLookupResult
+    data object NoMatch : DurPairLookupResult
+    data class Failure(val safeErrorCode: String) : DurPairLookupResult
 }

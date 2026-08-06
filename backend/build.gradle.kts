@@ -40,6 +40,23 @@ kotlin {
 	}
 }
 
-tasks.withType<Test> {
+tasks.withType<Test>().configureEach {
 	useJUnitPlatform()
+}
+
+tasks.named<Test>("test") {
+	useJUnitPlatform {
+		excludeTags("external-api")
+	}
+}
+
+tasks.register<Test>("externalApiTest") {
+	description = "Runs opt-in tests against external public data APIs."
+	group = "verification"
+	testClassesDirs = sourceSets["test"].output.classesDirs
+	classpath = sourceSets["test"].runtimeClasspath
+	useJUnitPlatform {
+		includeTags("external-api")
+	}
+	shouldRunAfter(tasks.named("test"))
 }

@@ -1,7 +1,7 @@
 package com.haneul.medassist.service
 
 import com.haneul.medassist.client.dur.DurIngredientApiClient
-import com.haneul.medassist.client.dur.DurLookupResult
+import com.haneul.medassist.client.dur.DurPairLookupResult
 import com.haneul.medassist.domain.interaction.Evidence
 import com.haneul.medassist.domain.interaction.IngredientPairResult
 import com.haneul.medassist.domain.interaction.InteractionResult
@@ -46,10 +46,10 @@ class IngredientComparisonService(
             )
         }
         return when (val dur = durClient.check(left, right)) {
-            is DurLookupResult.Prohibited -> IngredientPairResult(left, right, PairStatus.PROHIBITED, dur.evidence)
-            is DurLookupResult.Caution -> IngredientPairResult(left, right, PairStatus.CAUTION, dur.evidence)
-            DurLookupResult.NoMatch -> IngredientPairResult(left, right, PairStatus.NO_MATCH, emptyList())
-            is DurLookupResult.Failure -> IngredientPairResult(left, right, PairStatus.FAILED, emptyList(), dur.safeErrorCode)
+            is DurPairLookupResult.Prohibited -> IngredientPairResult(left, right, PairStatus.PROHIBITED, dur.evidence)
+            is DurPairLookupResult.Caution -> IngredientPairResult(left, right, PairStatus.CAUTION, dur.evidence)
+            DurPairLookupResult.NoMatch -> IngredientPairResult(left, right, PairStatus.NO_MATCH, emptyList())
+            is DurPairLookupResult.Failure -> IngredientPairResult(left, right, PairStatus.FAILED, emptyList(), dur.safeErrorCode)
         }
     }
 

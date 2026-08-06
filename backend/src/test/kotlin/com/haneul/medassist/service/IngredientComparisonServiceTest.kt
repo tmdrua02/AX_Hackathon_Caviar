@@ -1,7 +1,7 @@
 package com.haneul.medassist.service
 
 import com.haneul.medassist.client.dur.DurIngredientApiClient
-import com.haneul.medassist.client.dur.DurLookupResult
+import com.haneul.medassist.client.dur.DurPairLookupResult
 import com.haneul.medassist.domain.interaction.Evidence
 import com.haneul.medassist.domain.interaction.InteractionSeverity
 import com.haneul.medassist.domain.medication.Ingredient
@@ -15,7 +15,7 @@ import kotlin.test.assertTrue
 class IngredientComparisonServiceTest {
     @Test
     fun `same official code is duplicate even when DUR schema is unavailable`() {
-        val service = service { _, _ -> DurLookupResult.Failure("not-called") }
+        val service = service { _, _ -> DurPairLookupResult.Failure("not-called") }
 
         val result = service.compare(listOf(ingredient("A")), listOf(ingredient("A")))
 
@@ -25,7 +25,7 @@ class IngredientComparisonServiceTest {
 
     @Test
     fun `provider failure can never become no known issue`() {
-        val service = service { _, _ -> DurLookupResult.Failure("DUR_TIMEOUT") }
+        val service = service { _, _ -> DurPairLookupResult.Failure("DUR_TIMEOUT") }
 
         val result = service.compare(listOf(ingredient("A")), listOf(ingredient("B")))
 
@@ -36,7 +36,7 @@ class IngredientComparisonServiceTest {
 
     @Test
     fun `all resolved no-match pairs are no known issue with safety caveat`() {
-        val service = service { _, _ -> DurLookupResult.NoMatch }
+        val service = service { _, _ -> DurPairLookupResult.NoMatch }
 
         val result = service.compare(listOf(ingredient("A")), listOf(ingredient("B")))
 
@@ -58,7 +58,7 @@ class IngredientComparisonServiceTest {
             authority = "식품의약품안전처",
             reviewStatus = "OFFICIAL",
         )
-        val service = service { _, _ -> DurLookupResult.Prohibited(listOf(officialEvidence)) }
+        val service = service { _, _ -> DurPairLookupResult.Prohibited(listOf(officialEvidence)) }
 
         val result = service.compare(listOf(ingredient("A")), listOf(ingredient("B")))
 
@@ -66,10 +66,10 @@ class IngredientComparisonServiceTest {
         assertEquals("DUR-1", result.evidence.single().sourceRecordId)
     }
 
-    private fun service(answer: (Ingredient, Ingredient) -> DurLookupResult) =
+    private fun service(answer: (Ingredient, Ingredient) -> DurPairLookupResult) =
         IngredientComparisonService(
             durClient = object : DurIngredientApiClient {
-                override fun check(left: Ingredient, right: Ingredient): DurLookupResult = answer(left, right)
+                override fun check(left: Ingredient, right: Ingredient): DurPairLookupResult = answer(left, right)
             },
             coverageCalculator = CoverageCalculator(),
         )

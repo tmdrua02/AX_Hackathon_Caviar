@@ -50,12 +50,69 @@ medassist:
         circuit-open-duration: 30s
         max-concurrent-calls: 8
         permits-per-second: 5
+    dur:
+      base-url: ${DUR_API_BASE_URL:https://apis.data.go.kr/1471000/DURIrdntInfoService03}
+      operation-path: ${DUR_API_OPERATION_PATH:/getUsjntTabooInfoList02}
+      response-type: ${DUR_API_RESPONSE_TYPE:json}
+      type-name: ${DUR_API_TYPE_NAME:병용금기}
+      page-size: ${DUR_API_PAGE_SIZE:100}
+      max-pages: ${DUR_API_MAX_PAGES:100}
+      max-records: ${DUR_API_MAX_RECORDS:10000}
+      client:
+        connect-timeout: ${DUR_API_CONNECT_TIMEOUT:2s}
+        read-timeout: ${DUR_API_READ_TIMEOUT:5s}
+        max-retries: ${DUR_API_MAX_RETRIES:2}
+        retry-backoff: ${DUR_API_RETRY_BACKOFF:300ms}
+        circuit-failure-threshold: ${DUR_API_CIRCUIT_FAILURE_THRESHOLD:5}
+        circuit-open-duration: ${DUR_API_CIRCUIT_OPEN_DURATION:30s}
+        max-concurrent-calls: ${DUR_API_MAX_CONCURRENT_CALLS:8}
+        permits-per-second: ${DUR_API_PERMITS_PER_SECOND:5}
+    drug-overview:
+      base-url: ${DRUG_OVERVIEW_API_BASE_URL:https://apis.data.go.kr/1471000/DrbEasyDrugInfoService}
+      operation-path: ${DRUG_OVERVIEW_API_OPERATION_PATH:/getDrbEasyDrugList}
+      response-type: ${DRUG_OVERVIEW_API_RESPONSE_TYPE:json}
+      page-size: ${DRUG_OVERVIEW_API_PAGE_SIZE:100}
+      max-pages: ${DRUG_OVERVIEW_API_MAX_PAGES:100}
+      max-records: ${DRUG_OVERVIEW_API_MAX_RECORDS:10000}
+      client:
+        connect-timeout: ${DRUG_OVERVIEW_API_CONNECT_TIMEOUT:2s}
+        read-timeout: ${DRUG_OVERVIEW_API_READ_TIMEOUT:5s}
+        max-retries: ${DRUG_OVERVIEW_API_MAX_RETRIES:2}
+        retry-backoff: ${DRUG_OVERVIEW_API_RETRY_BACKOFF:300ms}
+        circuit-failure-threshold: ${DRUG_OVERVIEW_API_CIRCUIT_FAILURE_THRESHOLD:5}
+        circuit-open-duration: ${DRUG_OVERVIEW_API_CIRCUIT_OPEN_DURATION:30s}
+        max-concurrent-calls: ${DRUG_OVERVIEW_API_MAX_CONCURRENT_CALLS:8}
+        permits-per-second: ${DRUG_OVERVIEW_API_PERMITS_PER_SECOND:5}
+    health-functional-food:
+      base-url: ${HTFS_API_BASE_URL:https://apis.data.go.kr/1471000/HtfsInfoService03}
+      list-operation-path: ${HTFS_API_LIST_OPERATION_PATH:/getHtfsList01}
+      detail-operation-path: ${HTFS_API_DETAIL_OPERATION_PATH:/getHtfsItem01}
+      response-type: ${HTFS_API_RESPONSE_TYPE:json}
+      product-name-parameter: ${HTFS_API_PRODUCT_NAME_PARAMETER:Prduct}
+      manufacturer-parameter: ${HTFS_API_MANUFACTURER_PARAMETER:Entrps}
+      list-statement-no-parameter: ${HTFS_API_LIST_STATEMENT_NO_PARAMETER:Sttemnt_no}
+      detail-statement-no-parameter: ${HTFS_API_DETAIL_STATEMENT_NO_PARAMETER:STTEMNT_NO}
+      page-size: ${HTFS_API_PAGE_SIZE:100}
+      max-pages: ${HTFS_API_MAX_PAGES:100}
+      max-records: ${HTFS_API_MAX_RECORDS:10000}
+      client:
+        connect-timeout: ${HTFS_API_CONNECT_TIMEOUT:2s}
+        read-timeout: ${HTFS_API_READ_TIMEOUT:5s}
+        max-retries: ${HTFS_API_MAX_RETRIES:2}
+        retry-backoff: ${HTFS_API_RETRY_BACKOFF:300ms}
+        circuit-failure-threshold: ${HTFS_API_CIRCUIT_FAILURE_THRESHOLD:5}
+        circuit-open-duration: ${HTFS_API_CIRCUIT_OPEN_DURATION:30s}
+        max-concurrent-calls: ${HTFS_API_MAX_CONCURRENT_CALLS:8}
+        permits-per-second: ${HTFS_API_PERMITS_PER_SECOND:5}
     cache:
       positive-search-ttl: 6h
       negative-search-ttl: 5m
       ingredient-ttl: 24h
+      overview-ttl: 24h
       maximum-size: 1000
   matching:
     auto-selection-score: 95
     minimum-score-gap: 10
     maximum-candidates: 5
+  supplement-interaction-rules:
+    resource: ${SUPPLEMENT_INTERACTION_RULES_RESOURCE:classpath:supplement-interaction-rules.json}

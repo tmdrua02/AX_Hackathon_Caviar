@@ -56,6 +56,7 @@ data class PublicDataCacheProperties(
     var positiveSearchTtl: Duration = Duration.ofHours(6),
     var negativeSearchTtl: Duration = Duration.ofMinutes(5),
     var ingredientTtl: Duration = Duration.ofHours(24),
+    var overviewTtl: Duration = Duration.ofHours(24),
     var maximumSize: Long = 1_000,
 )
 

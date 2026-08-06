@@ -2,6 +2,11 @@ package com.haneul.medassist.client.common
 
 import com.haneul.medassist.config.PublicDataClientPolicy
 import com.haneul.medassist.config.PublicDataCredentialsProperties
+import com.haneul.medassist.config.DrugOverviewApiProperties
+import com.haneul.medassist.config.DrugProductApiProperties
+import com.haneul.medassist.config.DurApiProperties
+import com.haneul.medassist.config.HealthFunctionalFoodApiProperties
+import com.haneul.medassist.config.RestClientConfig
 import com.haneul.medassist.exception.ApiErrorCode
 import com.haneul.medassist.exception.PublicDataApiException
 import org.junit.jupiter.api.Test
@@ -11,6 +16,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotSame
 import kotlin.test.assertTrue
 import kotlin.test.fail
 
@@ -104,6 +110,23 @@ class PublicDataInfrastructureTest {
             held.get(1, TimeUnit.SECONDS)
             pool.shutdownNow()
         }
+    }
+
+    @Test
+    fun `public data API beans receive independent executor instances`() {
+        val config = RestClientConfig()
+        val factory = PublicDataCallExecutorFactory()
+        val product = config.drugProductCallExecutor(DrugProductApiProperties(), factory)
+        val dur = config.durCallExecutor(DurApiProperties(), factory)
+        val overview = config.drugOverviewCallExecutor(DrugOverviewApiProperties(), factory)
+        val supplement = config.healthFunctionalFoodCallExecutor(HealthFunctionalFoodApiProperties(), factory)
+
+        assertNotSame(product, dur)
+        assertNotSame(product, overview)
+        assertNotSame(dur, overview)
+        assertNotSame(product, supplement)
+        assertNotSame(dur, supplement)
+        assertNotSame(overview, supplement)
     }
 
     private fun policy(

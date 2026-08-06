@@ -8,6 +8,7 @@ import com.haneul.medassist.client.common.PublicDataResponseDecoder
 import com.haneul.medassist.config.DrugProductApiProperties
 import com.haneul.medassist.domain.medication.IngredientSearchResult
 import com.haneul.medassist.domain.medication.ProductSearchResult
+import com.haneul.medassist.domain.medication.VerifiedDrugProduct
 import com.haneul.medassist.exception.ApiErrorCode
 import com.haneul.medassist.exception.PublicDataApiException
 import org.springframework.beans.factory.annotation.Qualifier
@@ -38,6 +39,27 @@ class PublicDataDrugProductApiClient(
         responseValidator.validate(root)
         val records = responseParser.records(root, properties.mapping.searchItemsJsonPointer)
         return ProductSearchResult.Success(records.map { mapper.toProduct(it, retrievedAt) })
+    }
+
+    override fun findProduct(productCode: String): VerifiedDrugProduct? {
+        mapper.requireSearchMapping()
+        val requested = productCode.trim()
+        if (requested.isBlank()) {
+            throw PublicDataApiException(ApiErrorCode.VALIDATION_FAILED)
+        }
+        val retrievedAt = Instant.now()
+        val root = responseParser.parse(fetch(uriFactory.detailUri(requested)))
+        responseValidator.validate(root)
+        val products = responseParser.records(root, properties.mapping.searchItemsJsonPointer)
+            .map { mapper.toProduct(it, retrievedAt) }
+        val exact = products.filter { it.productCode == requested }.distinctBy(VerifiedDrugProduct::productCode)
+        if (products.any { it.productCode != requested } || exact.size > 1) {
+            throw PublicDataApiException(
+                ApiErrorCode.PUBLIC_API_RESPONSE_MISMATCH,
+                "공공 API 제품 상세 응답이 요청한 품목기준코드와 일치하지 않습니다.",
+            )
+        }
+        return exact.singleOrNull()
     }
 
     override fun findIngredients(productCode: String, productName: String): IngredientSearchResult {

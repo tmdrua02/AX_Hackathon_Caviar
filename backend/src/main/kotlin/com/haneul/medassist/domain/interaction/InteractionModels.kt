@@ -4,13 +4,15 @@ import com.haneul.medassist.domain.medication.Ingredient
 import java.time.Instant
 import java.util.UUID
 
-enum class InteractionSeverity {
+enum class DrugInteractionSeverity {
     PROHIBITED,
     CAUTION,
     DUPLICATE_OR_SIMILAR,
     NO_KNOWN_ISSUE,
     UNKNOWN,
 }
+
+typealias InteractionSeverity = DrugInteractionSeverity
 
 enum class InteractionCheckStatus {
     PENDING,
@@ -61,7 +63,7 @@ data class Coverage(
 )
 
 data class InteractionResult(
-    val status: InteractionSeverity,
+    val status: DrugInteractionSeverity,
     val summary: String,
     val ingredientPairs: List<IngredientPairResult>,
     val evidence: List<Evidence>,
