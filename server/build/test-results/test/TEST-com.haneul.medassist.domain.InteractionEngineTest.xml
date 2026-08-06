@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.haneul.medassist.domain.InteractionEngineTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-08-03T15:38:59" hostname="gimseung-gyeom-ui-MacBookAir.local" time="0.028">
+<testsuite name="com.haneul.medassist.domain.InteractionEngineTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-08-05T18:14:33" hostname="gimseung-gyeom-ui-MacBookAir.local" time="0.067">
   <properties/>
-  <testcase name="normalizerIgnoresSpacingAndPunctuation()" classname="com.haneul.medassist.domain.InteractionEngineTest" time="0.02"/>
-  <testcase name="prohibitedRequiresAndPreservesOfficialEvidence()" classname="com.haneul.medassist.domain.InteractionEngineTest" time="0.006"/>
-  <testcase name="missingDurEvidenceIsUnknownNeverSafe()" classname="com.haneul.medassist.domain.InteractionEngineTest" time="0.001"/>
+  <testcase name="normalizerIgnoresSpacingAndPunctuation()" classname="com.haneul.medassist.domain.InteractionEngineTest" time="0.054"/>
+  <testcase name="prohibitedRequiresAndPreservesOfficialEvidence()" classname="com.haneul.medassist.domain.InteractionEngineTest" time="0.01"/>
+  <testcase name="missingDurEvidenceIsUnknownNeverSafe()" classname="com.haneul.medassist.domain.InteractionEngineTest" time="0.002"/>
   <testcase name="sameNormalizedIngredientIsDuplicateWithPublicEvidence()" classname="com.haneul.medassist.domain.InteractionEngineTest" time="0.0"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>

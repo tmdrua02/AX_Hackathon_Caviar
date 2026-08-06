@@ -175,6 +175,8 @@ data class Consultation(
     val status: String,
     val transcript: List<TranscriptSegment> = emptyList(),
     val summary: ConsultationSummary? = null,
+    val failureCode: String? = null,
+    val failureMessage: String? = null,
 )
 
 @Serializable

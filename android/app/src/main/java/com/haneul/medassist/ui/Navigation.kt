@@ -1,11 +1,12 @@
 package com.haneul.medassist.ui
 
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Alarm
-import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.FactCheck
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Medication
@@ -22,6 +23,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.unit.dp
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -30,7 +34,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.haneul.medassist.AppUiState
 import com.haneul.medassist.AppViewModel
-import com.haneul.medassist.ui.theme.Primary
+import com.haneul.medassist.R
 
 object Routes {
     const val HOME = "home"
@@ -72,9 +76,20 @@ fun MedAssistNavigation(state: AppUiState, viewModel: AppViewModel) {
         snackbarHost = { SnackbarHost(snackbarHost) },
         bottomBar = { if (topLevel) BottomBar(nav, route) },
         floatingActionButton = {
-            if (route == Routes.HOME) {
-                FloatingActionButton(onClick = { nav.navigate(Routes.CHAT) }, containerColor = Primary, contentColor = Color.White) {
-                    Icon(Icons.Default.Chat, contentDescription = "복약 정보 챗봇 열기")
+            if (route != Routes.CHAT && route != Routes.CAPTURE && route != Routes.REVIEW && route != Routes.ANALYZING && route != Routes.RESULT) {
+                FloatingActionButton(
+                    onClick = { nav.navigate(Routes.CHAT) },
+                    containerColor = Color.Transparent,
+                    contentColor = Color.Unspecified,
+                    modifier = Modifier.size(68.dp),
+                    elevation = androidx.compose.material3.FloatingActionButtonDefaults.elevation(0.dp, 0.dp, 0.dp, 0.dp),
+                ) {
+                    Image(
+                        painter = painterResource(R.drawable.medibot_pill_button),
+                        contentDescription = "메디봇 챗봇 열기",
+                        modifier = Modifier.size(86.dp),
+                        contentScale = ContentScale.Fit,
+                    )
                 }
             }
         },
@@ -91,7 +106,7 @@ fun MedAssistNavigation(state: AppUiState, viewModel: AppViewModel) {
             composable(Routes.RECORDING) { RecordingHomeScreen(state, viewModel, padding, nav) }
             composable(Routes.ACTIVE_RECORDING) { ActiveRecordingScreen(state, viewModel, nav) }
             composable(Routes.RECORDING_FILES) { RecordingFilesScreen(state, viewModel, nav) }
-            composable(Routes.RECORDING_DETAIL) { entry -> RecordingDetailScreen(state, entry.arguments?.getString("id").orEmpty(), nav) }
+            composable(Routes.RECORDING_DETAIL) { entry -> RecordingDetailScreen(state, entry.arguments?.getString("id").orEmpty(), viewModel, nav) }
             composable(Routes.RECORDS) { RecordsScreen(state, padding, nav) }
             composable(Routes.CHAT) { ChatScreen(state, viewModel, nav) }
         }
