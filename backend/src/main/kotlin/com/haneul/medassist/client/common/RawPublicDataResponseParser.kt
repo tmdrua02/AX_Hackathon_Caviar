@@ -7,6 +7,12 @@ import tools.jackson.databind.JsonNode
 import tools.jackson.databind.ObjectMapper
 import tools.jackson.dataformat.xml.XmlMapper
 
+data class PublicDataPageMetadata(
+    val totalCount: Int,
+    val pageNumber: Int,
+    val pageSize: Int,
+)
+
 @Component
 class RawPublicDataResponseParser(
     private val objectMapper: ObjectMapper,
@@ -46,4 +52,44 @@ class RawPublicDataResponseParser(
             )
         }
     }
+
+    fun pageMetadata(
+        root: JsonNode,
+        totalCountJsonPointer: String,
+        pageNumberJsonPointer: String,
+        pageSizeJsonPointer: String,
+    ): PublicDataPageMetadata = PublicDataPageMetadata(
+        totalCount = requiredNonNegativeInt(root, totalCountJsonPointer, "totalCount"),
+        pageNumber = requiredPositiveInt(root, pageNumberJsonPointer, "pageNo"),
+        pageSize = requiredPositiveInt(root, pageSizeJsonPointer, "numOfRows"),
+    )
+
+    private fun requiredNonNegativeInt(root: JsonNode, pointer: String, description: String): Int {
+        val value = integerAt(root, pointer, description)
+        if (value < 0) throw invalidPagination(description)
+        return value
+    }
+
+    private fun requiredPositiveInt(root: JsonNode, pointer: String, description: String): Int {
+        val value = integerAt(root, pointer, description)
+        if (value <= 0) throw invalidPagination(description)
+        return value
+    }
+
+    private fun integerAt(root: JsonNode, pointer: String, description: String): Int {
+        if (pointer.isBlank()) {
+            throw PublicDataApiException(
+                ApiErrorCode.PUBLIC_API_MAPPING_UNVERIFIED,
+                "공공데이터포털 Swagger 명세 확인 필요: $description 위치가 설정되지 않았습니다.",
+            )
+        }
+        val node = root.at(pointer)
+        val raw = node.takeUnless { it.isMissingNode || it.isNull }?.asString()?.trim()
+        return raw?.toIntOrNull() ?: throw invalidPagination(description)
+    }
+
+    private fun invalidPagination(description: String): PublicDataApiException = PublicDataApiException(
+        ApiErrorCode.PUBLIC_API_INVALID_RESPONSE,
+        "공공 API 페이지 정보 $description 값을 확인할 수 없습니다.",
+    )
 }

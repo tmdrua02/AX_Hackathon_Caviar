@@ -29,6 +29,8 @@ class DrugProductSearchServiceTest {
         assertEquals("NOT_FOUND", response.candidates.single().ingredientLookupStatus)
         assertTrue(response.requiresUserConfirmation)
         assertFalse(response.coverage.complete)
+        assertEquals("official-1", provider.lastIngredientProductCode)
+        assertEquals("타이레놀정500밀리그램", provider.lastIngredientProductName)
     }
 
     @Test
@@ -66,7 +68,16 @@ private class FakeDrugProductApiClient(
     private val products: List<VerifiedDrugProduct>,
     private val ingredientResult: IngredientSearchResult,
 ) : DrugProductApiClient {
+    var lastIngredientProductCode: String? = null
+        private set
+    var lastIngredientProductName: String? = null
+        private set
+
     override fun searchProducts(productName: String) = ProductSearchResult.Success(products)
 
-    override fun findIngredients(productCode: String): IngredientSearchResult = ingredientResult
+    override fun findIngredients(productCode: String, productName: String): IngredientSearchResult {
+        lastIngredientProductCode = productCode
+        lastIngredientProductName = productName
+        return ingredientResult
+    }
 }

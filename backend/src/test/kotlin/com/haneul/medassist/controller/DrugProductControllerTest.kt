@@ -79,7 +79,7 @@ private class SuccessClient(
     private val products: List<VerifiedDrugProduct>,
 ) : DrugProductApiClient {
     override fun searchProducts(productName: String) = ProductSearchResult.Success(products)
-    override fun findIngredients(productCode: String) = IngredientSearchResult.Success(emptyList())
+    override fun findIngredients(productCode: String, productName: String) = IngredientSearchResult.Success(emptyList())
 }
 
 private class FailingClient : DrugProductApiClient {
@@ -87,7 +87,7 @@ private class FailingClient : DrugProductApiClient {
         throw PublicDataApiException(ApiErrorCode.PUBLIC_API_UNAVAILABLE, retryable = true)
     }
 
-    override fun findIngredients(productCode: String) = IngredientSearchResult.ProviderError("not-called")
+    override fun findIngredients(productCode: String, productName: String) = IngredientSearchResult.ProviderError("not-called")
 }
 
 @Suppress("unused")

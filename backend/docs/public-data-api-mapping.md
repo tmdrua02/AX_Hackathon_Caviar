@@ -9,23 +9,33 @@
 - 제품 상세: `/getDrugPrdtPrmsnDtlInq06`
 - 주성분 상세: `/getDrugPrdtMcpnDtlInq07`
 - 제품 검색 요청변수: `serviceKey`, `pageNo`, `numOfRows`, `type`, `item_name`
+- 제품 검색 목록: `/body/items`
+- 제품 검색 필드: `ITEM_SEQ`, `ITEM_NAME`, `ENTP_NAME`, `ITEM_ENG_NAME`, `ENTP_ENG_NAME`
+- 제품 상세 정확 조회 요청변수: `item_seq`
+- 제품 상세 주요 필드: `ITEM_SEQ`, `ITEM_NAME`, `ENTP_NAME`, `ITEM_PERMIT_DATE`, `MATERIAL_NAME`, `MAIN_ITEM_INGR`, `MAIN_INGR_ENG`, `INGR_NAME`, `ATC_CODE`, `ITEM_ENG_NAME`, `ENTP_ENG_NAME`, `RARE_DRUG_YN`
+- 주성분 요청변수: `serviceKey`, `pageNo`, `numOfRows`, `type`, `Entrps_prmisn_no`, `Prduct`, `Entrps`, `Bizrno`
+- 주성분 목록: `/body/items`
+- 주성분 필드: `ITEM_SEQ`, `PRDUCT`, `MTRAL_SN`, `MTRAL_CODE`, `MTRAL_NM`, `MAIN_INGR_ENG`, `QNT`, `INGD_UNIT_CD`, `TAMT_SEQ`
 - JSON/XML 지원
 - 공식 데이터셋: https://www.data.go.kr/data/15095677/openapi.do
 
-## 아직 확인되지 않은 매핑
+## 적용 정책
 
-현재 저장소에는 이 서비스 버전의 Swagger raw 응답 또는 실제 API fixture가 없습니다. 다음 값은 코드에서 추측하지 않으며 환경변수 설정 전까지 `PUBLIC_API_MAPPING_UNVERIFIED`로 처리합니다.
+- 제품 검색은 `item_name`만 사용한다.
+- 주성분 조회에는 Swagger 원문 철자인 `Prduct`를 사용하며 `item_seq`를 보내지 않는다.
+- `Prduct` 결과는 여러 제품을 포함할 수 있으므로 모든 페이지를 읽은 뒤 선택 제품의 `ITEM_SEQ`와 정확히 같은 레코드만 채택한다.
+- `MTRAL_CODE`, `MTRAL_NM`, `QNT`, `INGD_UNIT_CD` 구조화 필드를 주성분 기본 데이터로 사용한다.
+- `MATERIAL_NAME`, `MAIN_ITEM_INGR`, `INGR_NAME` 문자열을 split해 공식 성분을 생성하지 않는다.
+- `MAIN_INGR_ENG`가 `/`로 연결되어 있어도 분해해 별도 공식 성분을 만들지 않는다.
+- 제품 상세 operation은 명세를 기록하고 URI를 검증하지만 현재 검색 REST 흐름에서는 추가 호출하지 않는다.
+- JSON 응답은 raw byte로 받은 뒤 charset이 없으면 UTF-8로 엄격하게 디코딩한다. malformed/unmappable byte와 `�`는 정상 데이터로 허용하지 않는다.
 
-- 제품 목록 배열 JSON pointer
-- 응답 품목기준코드 필드
-- 응답 제품명 필드
-- 응답 제조사 필드
-- 주성분 조회의 품목코드 요청변수
-- 성분 목록 배열 JSON pointer
-- 성분코드·한글명·영문명·함량·단위 필드
-- 데이터 없음 전용 `resultCode`가 존재하는지 여부
+## 아직 확인할 사항
 
-테스트 fixture의 `CODE`, `NAME`, `INGR_NAME` 등은 MockWebServer 전용 내부 테스트 필드이며 공식 필드라고 주장하지 않습니다.
+- 실제 운영 응답의 `Content-Type` 및 charset 헤더 실측
+- 데이터 없음 전용 `resultCode` 존재 여부
+- 운영 호출량에 맞는 최대 페이지와 page size
+- 상세정보의 문자열 필드는 교차검증이 필요해질 때만 별도 사용 목적을 설계
 
 ## DUR
 

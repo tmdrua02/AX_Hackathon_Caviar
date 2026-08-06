@@ -37,6 +37,32 @@ class DrugProductApiMapper(
         )
     }
 
+    fun ingredientProductCode(record: JsonNode): String = requiredText(
+        record,
+        properties.mapping.ingredientProductCodeField,
+        "주성분 응답 품목기준코드",
+    )
+
+    fun ingredientProductName(record: JsonNode): String? =
+        optionalText(record, properties.mapping.ingredientProductNameField)
+
+    fun ingredientOrder(record: JsonNode): Pair<Int?, Int?> =
+        integerOrNull(record, properties.mapping.ingredientSequenceField) to
+            integerOrNull(record, properties.mapping.ingredientAmountSequenceField)
+
+    fun ingredientIdentity(record: JsonNode): String? {
+        val productCode = ingredientProductCode(record)
+        val ingredientSequence = optionalText(record, properties.mapping.ingredientSequenceField)
+        val amountSequence = optionalText(record, properties.mapping.ingredientAmountSequenceField)
+        if (ingredientSequence == null && amountSequence == null) return null
+        return listOf(
+            productCode,
+            ingredientSequence.orEmpty(),
+            amountSequence.orEmpty(),
+            optionalText(record, properties.mapping.ingredientCodeField).orEmpty(),
+        ).joinToString("|")
+    }
+
     fun toIngredient(
         record: JsonNode,
         productCode: String,
@@ -87,6 +113,9 @@ class DrugProductApiMapper(
             ?.trim()
             ?.takeIf(String::isNotBlank)
     }
+
+    private fun integerOrNull(record: JsonNode, field: String): Int? =
+        optionalText(record, field)?.toIntOrNull()
 
     companion object {
         const val SOURCE_NAME = "식품의약품안전처 의약품 제품 허가정보"

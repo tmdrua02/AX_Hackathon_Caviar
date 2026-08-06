@@ -1,20 +1,17 @@
 package com.haneul.medassist.client.common
 
-import com.haneul.medassist.config.DrugProductApiProperties
+import com.haneul.medassist.config.PublicDataClientPolicy
 import com.haneul.medassist.exception.ApiErrorCode
 import com.haneul.medassist.exception.PublicDataApiException
-import org.springframework.stereotype.Component
 import java.time.Duration
 import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
-@Component
 class PublicDataCallExecutor(
-    properties: DrugProductApiProperties,
+    private val policy: PublicDataClientPolicy,
 ) {
-    private val policy = properties.policy
     private val bulkhead = Semaphore(policy.maxConcurrentCalls.coerceAtLeast(1))
     private val consecutiveFailures = AtomicInteger(0)
     private val circuitOpenUntilNanos = AtomicLong(0)
@@ -36,14 +33,15 @@ class PublicDataCallExecutor(
         try {
             awaitRatePermit()
             var last: PublicDataApiException? = null
-            repeat(policy.maxAttempts.coerceAtLeast(1)) { attempt ->
+            val maxAttempts = policy.maxRetries.coerceAtLeast(0) + 1
+            repeat(maxAttempts) { attempt ->
                 try {
                     val result = call()
                     consecutiveFailures.set(0)
                     return result
                 } catch (exception: PublicDataApiException) {
                     last = exception
-                    if (!exception.retryable || attempt == policy.maxAttempts.coerceAtLeast(1) - 1) {
+                    if (!exception.retryable || attempt == maxAttempts - 1) {
                         recordFailure(exception)
                         throw exception
                     }
@@ -82,7 +80,7 @@ class PublicDataCallExecutor(
                 rateWindowStartNanos = now
                 callsInWindow = 0
             }
-            if (callsInWindow >= policy.requestsPerSecond.coerceAtLeast(1)) {
+            if (callsInWindow >= policy.permitsPerSecond.coerceAtLeast(1)) {
                 val waitNanos = oneSecond - (now - rateWindowStartNanos)
                 if (waitNanos > 0) sleep(Duration.ofNanos(waitNanos))
                 now = System.nanoTime()
@@ -94,7 +92,7 @@ class PublicDataCallExecutor(
     }
 
     private fun backoffFor(attempt: Int): Duration =
-        policy.initialBackoff.multipliedBy(1L shl attempt.coerceAtMost(10))
+        policy.retryBackoff.multipliedBy(1L shl attempt.coerceAtMost(10))
 
     private fun sleep(duration: Duration) {
         try {

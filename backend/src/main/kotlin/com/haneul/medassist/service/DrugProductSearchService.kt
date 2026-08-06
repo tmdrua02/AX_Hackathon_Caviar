@@ -48,7 +48,7 @@ class DrugProductSearchService(
 
         val candidates = rankedProducts.map { (product, assessment) ->
             val ingredientResult = cache.ingredients(product.productCode)
-                ?: apiClient.findIngredients(product.productCode).also { result ->
+                ?: apiClient.findIngredients(product.productCode, product.productName).also { result ->
                     if (result is IngredientSearchResult.Success) cache.putIngredients(product.productCode, result)
                 }
             val (ingredients, status) = ingredientResult.toCandidateIngredients()

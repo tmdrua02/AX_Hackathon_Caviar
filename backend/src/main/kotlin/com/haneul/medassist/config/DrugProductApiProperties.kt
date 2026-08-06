@@ -6,27 +6,34 @@ import java.time.Duration
 @ConfigurationProperties("medassist.public-data.drug-product")
 data class DrugProductApiProperties(
     var baseUrl: String = "https://apis.data.go.kr/1471000/DrugPrdtPrmsnInfoService07",
-    var serviceKey: String = "",
-    var serviceKeyEncoded: Boolean = true,
     var searchOperationPath: String = "/getDrugPrdtPrmsnInq07",
+    var detailOperationPath: String = "/getDrugPrdtPrmsnDtlInq06",
     var ingredientOperationPath: String = "/getDrugPrdtMcpnDtlInq07",
     var pageSize: Int = 20,
+    var maximumPages: Int = 50,
     var mapping: Mapping = Mapping(),
-    var policy: Policy = Policy(),
+    var client: PublicDataClientPolicy = PublicDataClientPolicy(),
 ) {
     data class Mapping(
-        var searchItemsJsonPointer: String = "",
-        var ingredientItemsJsonPointer: String = "",
-        var productCodeField: String = "",
-        var productNameField: String = "",
-        var manufacturerField: String = "",
-        var ingredientProductCodeParameter: String = "",
-        var ingredientCodeField: String = "",
-        var ingredientDisplayNameField: String = "",
-        var ingredientKoreanNameField: String = "",
-        var ingredientEnglishNameField: String = "",
-        var ingredientAmountField: String = "",
-        var ingredientUnitField: String = "",
+        var searchItemsJsonPointer: String = "/body/items",
+        var ingredientItemsJsonPointer: String = "/body/items",
+        var totalCountJsonPointer: String = "/body/totalCount",
+        var pageNumberJsonPointer: String = "/body/pageNo",
+        var pageSizeJsonPointer: String = "/body/numOfRows",
+        var productCodeField: String = "ITEM_SEQ",
+        var productNameField: String = "ITEM_NAME",
+        var manufacturerField: String = "ENTP_NAME",
+        var ingredientProductNameParameter: String = "Prduct",
+        var ingredientProductCodeField: String = "ITEM_SEQ",
+        var ingredientProductNameField: String = "PRDUCT",
+        var ingredientSequenceField: String = "MTRAL_SN",
+        var ingredientAmountSequenceField: String = "TAMT_SEQ",
+        var ingredientCodeField: String = "MTRAL_CODE",
+        var ingredientDisplayNameField: String = "MTRAL_NM",
+        var ingredientKoreanNameField: String = "MTRAL_NM",
+        var ingredientEnglishNameField: String = "MAIN_INGR_ENG",
+        var ingredientAmountField: String = "QNT",
+        var ingredientUnitField: String = "INGD_UNIT_CD",
     ) {
         fun searchIsConfigured(): Boolean =
             searchItemsJsonPointer.isNotBlank() &&
@@ -35,20 +42,13 @@ data class DrugProductApiProperties(
 
         fun ingredientsAreConfigured(): Boolean =
             ingredientItemsJsonPointer.isNotBlank() &&
-                ingredientProductCodeParameter.isNotBlank() &&
+                totalCountJsonPointer.isNotBlank() &&
+                pageNumberJsonPointer.isNotBlank() &&
+                pageSizeJsonPointer.isNotBlank() &&
+                ingredientProductNameParameter.isNotBlank() &&
+                ingredientProductCodeField.isNotBlank() &&
                 ingredientDisplayNameField.isNotBlank()
     }
-
-    data class Policy(
-        var connectTimeout: Duration = Duration.ofSeconds(2),
-        var readTimeout: Duration = Duration.ofSeconds(5),
-        var maxAttempts: Int = 2,
-        var initialBackoff: Duration = Duration.ofMillis(300),
-        var circuitFailureThreshold: Int = 5,
-        var circuitOpenDuration: Duration = Duration.ofSeconds(30),
-        var maxConcurrentCalls: Int = 8,
-        var requestsPerSecond: Int = 5,
-    )
 }
 
 @ConfigurationProperties("medassist.public-data.cache")

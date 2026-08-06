@@ -14,5 +14,6 @@ enum class ApiErrorCode(
     PUBLIC_API_TIMEOUT(HttpStatus.SERVICE_UNAVAILABLE, "공공 의약품 API 응답이 지연되고 있습니다."),
     PUBLIC_API_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "공공 의약품 API를 사용할 수 없습니다."),
     PUBLIC_API_INVALID_RESPONSE(HttpStatus.BAD_GATEWAY, "공공 의약품 API 응답을 확인할 수 없습니다."),
+    PUBLIC_API_RESPONSE_MISMATCH(HttpStatus.BAD_GATEWAY, "공공 의약품 API 응답이 선택한 제품과 일치하지 않습니다."),
     PUBLIC_API_CIRCUIT_OPEN(HttpStatus.SERVICE_UNAVAILABLE, "공공 의약품 API 보호 회로가 열려 있습니다."),
 }
