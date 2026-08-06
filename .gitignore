@@ -2,6 +2,9 @@
 .gradle-user-home/
 **/.gradle/
 **/build/
+**/bin/
+/tmp/
+**/uploads/
 
 *.apk
 *.aab
@@ -10,3 +13,6 @@ local.properties
 
 *.jks
 *.keystore
+*.env
+.env
+server/.env

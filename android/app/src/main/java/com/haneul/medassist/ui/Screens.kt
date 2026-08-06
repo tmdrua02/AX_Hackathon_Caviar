@@ -11,7 +11,10 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -25,10 +28,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -38,12 +43,14 @@ import androidx.core.content.ContextCompat
 import androidx.navigation.NavHostController
 import com.haneul.medassist.AppUiState
 import com.haneul.medassist.AppViewModel
+import com.haneul.medassist.R
 import com.haneul.medassist.data.*
 import com.haneul.medassist.recording.AmplitudeProcessor
 import com.haneul.medassist.recording.WaveformBar
 import com.haneul.medassist.ui.theme.*
 import kotlinx.coroutines.delay
 import java.util.Locale
+import androidx.compose.ui.window.Dialog
 
 @Composable
 fun HomeScreen(state: AppUiState, viewModel: AppViewModel, padding: PaddingValues) {
@@ -403,26 +410,46 @@ private fun ResultDetailDialog(result: InteractionResult, onDismiss: () -> Unit)
 fun RecordingHomeScreen(state: AppUiState, viewModel: AppViewModel, padding: PaddingValues, nav: NavHostController) {
     val context = LocalContext.current
     var consent by remember { mutableStateOf(false) }
+    val latest = (state.consultations as? LoadState.Content)?.value?.maxByOrNull { it.consultedAt }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) consent = true
         else viewModel.recordingPermissionDenied()
     }
-    ScreenColumn(padding, horizontal = Alignment.CenterHorizontally) {
-        Text("진료 녹음", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.align(Alignment.Start))
-        Spacer(Modifier.height(48.dp))
-        FilledIconButton(
+    Column(
+        Modifier.fillMaxSize().padding(padding).statusBarsPadding().padding(horizontal = 22.dp, vertical = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp),
+    ) {
+        SimpleProfileHeader("진료 녹음")
+        Spacer(Modifier.height(4.dp))
+        Text("녹음 파일", style = MaterialTheme.typography.titleLarge)
+        if (latest == null) {
+            Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = SurfaceSoft)) {
+                Text("아직 저장된 진료 녹음이 없습니다.", Modifier.fillMaxWidth().padding(22.dp), color = Muted)
+            }
+        } else {
+            RecordingFileCard(latest, onClick = { nav.navigate("recording/detail/${latest.id}") })
+        }
+        Button(
             onClick = {
                 if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) consent = true
                 else permission.launch(Manifest.permission.RECORD_AUDIO)
             },
-            modifier = Modifier.size(132.dp), shape = CircleShape,
-        ) { Icon(Icons.Default.Mic, contentDescription = "진료 녹음 시작", modifier = Modifier.size(62.dp)) }
-        Text("버튼을 눌러 진료 녹음을 시작하세요", color = Muted)
-        state.recording.error?.let { Text(it, color = Danger, style = MaterialTheme.typography.bodyMedium) }
-        OutlinedButton(onClick = { nav.navigate(Routes.RECORDING_FILES) }, modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp)) {
-            Icon(Icons.Default.Folder, null); Spacer(Modifier.width(8.dp)); Text("녹음 파일 보러가기")
+            modifier = Modifier.fillMaxWidth().height(58.dp),
+            shape = RoundedCornerShape(12.dp),
+        ) {
+            Icon(Icons.Default.Mic, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text("녹음하기", fontWeight = FontWeight.Bold)
         }
-        SafetyNotice("녹음 전 의료진에게 알리고 동의를 확인하세요. 지역 법률과 의료기관 정책은 출시 전 별도 검토가 필요합니다.")
+        state.recording.error?.let { Text(it, color = Danger, style = MaterialTheme.typography.bodyMedium) }
+        if (((state.consultations as? LoadState.Content)?.value?.size ?: 0) > 1) {
+            TextButton(onClick = { nav.navigate(Routes.RECORDING_FILES) }, modifier = Modifier.align(Alignment.End)) {
+                Text("전체 녹음 보기")
+                Icon(Icons.Default.ChevronRight, null)
+            }
+        }
+        Spacer(Modifier.weight(1f))
+        Text("녹음 전 의료진에게 알리고 동의를 확인해 주세요.", color = Muted, style = MaterialTheme.typography.bodyMedium)
     }
     if (consent) {
         AlertDialog(
@@ -442,30 +469,57 @@ fun ActiveRecordingScreen(state: AppUiState, viewModel: AppViewModel, nav: NavHo
     DisposableEffect(viewModel) {
         onDispose { viewModel.stopRecordingIfActive() }
     }
-    Column(Modifier.fillMaxSize().statusBarsPadding().padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        BackTitle("진료 녹음 중", nav)
+    Column(Modifier.fillMaxSize().statusBarsPadding().padding(horizontal = 22.dp, vertical = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        BackTitle("진료 녹음", nav)
+        Spacer(Modifier.height(48.dp))
+        Text(formatElapsed(recording.elapsedMs), style = MaterialTheme.typography.headlineLarge, color = Primary)
         Spacer(Modifier.height(34.dp))
-        Text(formatElapsed(recording.elapsedMs), style = MaterialTheme.typography.headlineLarge)
-        Spacer(Modifier.height(28.dp))
-        RecordingWaveform(viewModel, Modifier.fillMaxWidth().height(180.dp))
+        Box(
+            Modifier.fillMaxWidth().height(210.dp).clip(RoundedCornerShape(2.dp)).background(Color(0xFFF5F5F5)).padding(horizontal = 8.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            RecordingWaveform(viewModel, Modifier.fillMaxWidth().height(150.dp))
+            Box(Modifier.width(1.dp).fillMaxHeight().background(Color(0xFFFF9C9C)))
+        }
         val statusText = when {
             recording.finalizing -> "녹음 파일 마무리 중"
             recording.paused -> "일시정지됨"
-            else -> "녹음 중"
+            recording.active -> "녹음 중"
+            recording.readyToSave -> "녹음 완료"
+            else -> "녹음 종료"
         }
-        Text(statusText, color = if (recording.paused || recording.finalizing) Warning else Primary, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(12.dp))
+        Text(
+            statusText,
+            color = if (recording.paused || recording.finalizing) Warning else Muted,
+            fontWeight = FontWeight.SemiBold,
+        )
         recording.error?.let { Text(it, color = Danger, style = MaterialTheme.typography.bodyMedium) }
+        recording.inputWarning?.let { Text(it, color = Warning, style = MaterialTheme.typography.bodyMedium) }
         Spacer(Modifier.weight(1f))
-        Row(horizontalArrangement = Arrangement.spacedBy(30.dp), verticalAlignment = Alignment.CenterVertically) {
-            FilledTonalIconButton(onClick = viewModel::pauseResumeRecording, modifier = Modifier.size(68.dp)) {
-                Icon(if (recording.paused) Icons.Default.PlayArrow else Icons.Default.Pause, contentDescription = if (recording.paused) "녹음 재개" else "녹음 일시정지", modifier = Modifier.size(34.dp))
+        if (recording.active) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = {}, modifier = Modifier.size(58.dp)) { Icon(Icons.Default.Menu, contentDescription = "녹음 메뉴", tint = Ink) }
+                FilledTonalIconButton(onClick = viewModel::pauseResumeRecording, modifier = Modifier.size(68.dp), colors = IconButtonDefaults.filledTonalIconButtonColors(containerColor = Color(0xFFF2F2F2))) {
+                    Icon(if (recording.paused) Icons.Default.PlayArrow else Icons.Default.Pause, contentDescription = if (recording.paused) "녹음 재개" else "녹음 일시정지", modifier = Modifier.size(32.dp), tint = Ink)
+                }
+                IconButton(onClick = { viewModel.stopRecording(); saveDialog = true }, modifier = Modifier.size(58.dp)) {
+                    Icon(Icons.Default.Stop, contentDescription = "녹음 정지", modifier = Modifier.size(28.dp), tint = Ink)
+                }
             }
-            FilledIconButton(onClick = { viewModel.stopRecording(); saveDialog = true }, modifier = Modifier.size(86.dp), colors = IconButtonDefaults.filledIconButtonColors(containerColor = Danger)) {
-                Icon(Icons.Default.Stop, contentDescription = "녹음 정지", modifier = Modifier.size(42.dp))
+        } else if (recording.readyToSave) {
+            Button(
+                onClick = { saveDialog = true },
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Ink),
+            ) {
+                Icon(Icons.Default.Save, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("녹음 파일 저장")
             }
         }
-        Spacer(Modifier.height(32.dp))
-        SafetyNotice("전화 수신이나 오디오 포커스 상실 시 녹음을 일시정지하고 파일 상태를 확인하세요.")
+        Spacer(Modifier.height(24.dp))
     }
     if (saveDialog) RecordingSaveDialog(
         duration = recording.elapsedMs,
@@ -514,90 +568,151 @@ private fun RecordingSaveDialog(
     onDismiss: () -> Unit,
     onSave: (String, String) -> Unit,
 ) {
-    var title by remember { mutableStateOf("진료 녹음") }
+    var title by remember { mutableStateOf("") }
     var hospital by remember { mutableStateOf("") }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("녹음 저장") },
-        text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(if (finalizing) "녹음 파일을 저장할 준비 중입니다." else "총 길이 ${formatDuration(duration)} · 진료 일시는 현재 시각으로 저장됩니다.", color = Muted)
-            if (!finalizing && error != null) Text(error, color = Danger, style = MaterialTheme.typography.bodyMedium)
-            OutlinedTextField(title, { title = it }, label = { Text("제목 *") }, singleLine = true)
-            OutlinedTextField(hospital, { hospital = it }, label = { Text("병원명 (선택)") }, singleLine = true)
-        } },
-        confirmButton = { Button(onClick = { onSave(title, hospital) }, enabled = title.isNotBlank() && canSave) {
-            if (finalizing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("저장하고 분석")
-        } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
-    )
+    var isConsultation by remember { mutableStateOf(true) }
+    Dialog(onDismissRequest = onDismiss) {
+        Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
+            Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("녹음 파일 저장", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                    IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = "닫기") }
+                }
+                Text("파일 이름", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                OutlinedTextField(title, { title = it }, modifier = Modifier.fillMaxWidth(), placeholder = { Text("파일 이름을 입력해 주세요") }, singleLine = true, shape = RoundedCornerShape(10.dp))
+                Text("병원/약국 이름", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                OutlinedTextField(hospital, { hospital = it }, modifier = Modifier.fillMaxWidth(), placeholder = { Text("병원, 약국 이름을 입력해 주세요") }, singleLine = true, shape = RoundedCornerShape(10.dp))
+                Text("기록 유형 선택", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    RecordTypeCard("진료 기록", "병원에서 녹음", isConsultation, Modifier.weight(1f)) { isConsultation = true }
+                    RecordTypeCard("복약 기록", "약국에서 녹음", !isConsultation, Modifier.weight(1f)) { isConsultation = false }
+                }
+                if (finalizing) Text("녹음 파일을 마무리하는 중입니다.", color = Muted)
+                else Text("녹음 길이 ${formatDuration(duration)}", color = Muted)
+                error?.let { Text(it, color = Danger, style = MaterialTheme.typography.bodyMedium) }
+                Button(
+                    onClick = { onSave(title, hospital) },
+                    enabled = title.isNotBlank() && canSave,
+                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Ink),
+                ) {
+                    if (finalizing) CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
+                    else Text("저장하기")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RecordTypeCard(title: String, subtitle: String, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    Card(
+        onClick = onClick,
+        modifier = modifier,
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, if (selected) Primary else Color.Transparent),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFF6F6F6)),
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(if (selected) Icons.Default.CheckCircle else Icons.Default.Circle, null, tint = if (selected) Primary else Color(0xFFD8D8D8), modifier = Modifier.size(20.dp))
+                Text(title, Modifier.padding(start = 7.dp), fontWeight = FontWeight.SemiBold)
+            }
+            Text(subtitle, color = Muted, style = MaterialTheme.typography.bodyMedium)
+        }
+    }
 }
 
 @Composable
 fun RecordingFilesScreen(state: AppUiState, viewModel: AppViewModel, nav: NavHostController) {
-    var playing by remember { mutableStateOf<String?>(null) }
-    LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        item { BackTitle("녹음 파일", nav) }
+    LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(22.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        item { BackTitle("진료 녹음", nav) }
+        item { Text("녹음 파일", style = MaterialTheme.typography.titleLarge) }
         when (val consultations = state.consultations) {
             LoadState.Loading, LoadState.Idle -> item { LoadingCard("녹음 목록을 불러오는 중입니다.") }
             LoadState.Empty -> item { EmptyCard("저장된 녹음이 없습니다.") }
             is LoadState.Error -> item { ErrorCard(consultations.message, viewModel::loadConsultations) }
             is LoadState.Content -> items(consultations.value, key = { it.id }) { consultation ->
-                Card(Modifier.fillMaxWidth().clickable { nav.navigate("recording/detail/${consultation.id}") }, shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = SurfaceSoft)) {
-                    Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClick = { playing = if (playing == consultation.id) null else consultation.id }, modifier = Modifier.size(52.dp)) {
-                            Icon(if (playing == consultation.id) Icons.Default.PauseCircle else Icons.Default.PlayCircle, contentDescription = if (playing == consultation.id) "재생 일시정지" else "녹음 재생", tint = Primary, modifier = Modifier.size(38.dp))
-                        }
-                        Column(Modifier.weight(1f).padding(start = 8.dp)) {
-                            Text(consultation.title, fontWeight = FontWeight.Bold)
-                            Text("${consultation.hospitalName.orEmpty()} · ${formatDuration(consultation.durationMs)}", color = Muted)
-                            Text(if (consultation.status == "SUCCEEDED") "분석 완료" else "${consultation.status} · 다시 시도 가능", color = Primary, style = MaterialTheme.typography.bodyMedium)
-                        }
-                        Icon(Icons.Default.ChevronRight, null)
-                    }
-                }
+                RecordingFileCard(consultation, onClick = { nav.navigate("recording/detail/${consultation.id}") })
             }
         }
-        item { Button(onClick = { nav.navigate(Routes.RECORDING) }, Modifier.fillMaxWidth().heightIn(min = 54.dp)) { Icon(Icons.Default.Mic, null); Spacer(Modifier.width(8.dp)); Text("새 녹음하기") } }
+        item { Button(onClick = { nav.navigate(Routes.RECORDING) }, Modifier.fillMaxWidth().height(58.dp), shape = RoundedCornerShape(12.dp)) { Icon(Icons.Default.Mic, null); Spacer(Modifier.width(8.dp)); Text("녹음하기") } }
     }
 }
 
 @Composable
-fun RecordingDetailScreen(state: AppUiState, id: String, nav: NavHostController) {
+private fun RecordingFileCard(consultation: Consultation, onClick: () -> Unit) {
+    val status = when (consultation.status) {
+        "SUCCEEDED" -> "AI 기록 완료"
+        "RUNNING", "QUEUED" -> "AI 기록 생성 중"
+        else -> "분석 실패 · 다시 시도 가능"
+    }
+    Card(onClick = onClick, shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFFF3F3F3))) {
+        Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text(consultation.title, fontWeight = FontWeight.Bold)
+                Text("${consultation.consultedAt.take(16).replace('T', ' ')} · ${consultation.hospitalName.orEmpty()}", color = Muted, style = MaterialTheme.typography.bodyMedium)
+                Text(status, color = if (consultation.status == "FAILED") Danger else Primary, style = MaterialTheme.typography.bodyMedium)
+            }
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(Icons.Default.PlayCircle, contentDescription = "녹음 재생", tint = Ink, modifier = Modifier.size(34.dp))
+                Text(formatDuration(consultation.durationMs), color = Muted, style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+    }
+}
+
+@Composable
+fun RecordingDetailScreen(state: AppUiState, id: String, viewModel: AppViewModel, nav: NavHostController) {
     val consultation = (state.consultations as? LoadState.Content)?.value?.firstOrNull { it.id == id }
     var tab by remember { mutableIntStateOf(0) }
-    LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(22.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { BackTitle(consultation?.title ?: "음성 기록", nav) }
         if (consultation == null) item { EmptyCard("기록을 찾을 수 없습니다.") } else {
-            item { Text("${consultation.consultedAt.take(10)} · ${formatDuration(consultation.durationMs)} · ${consultation.hospitalName.orEmpty()}", color = Muted) }
-            item { TabRow(selectedTabIndex = tab) {
-                Tab(tab == 0, { tab = 0 }, text = { Text("음성 기록") })
-                Tab(tab == 1, { tab = 1 }, text = { Text("요약 메모") })
+            item { AssistChip(onClick = {}, label = { Text("진료 기록") }, colors = AssistChipDefaults.assistChipColors(containerColor = Color(0xFFF0F7FF))) }
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Text("${consultation.consultedAt.take(16).replace('T', ' ')}   ${formatDuration(consultation.durationMs)}", fontWeight = FontWeight.SemiBold)
+                    Text(consultation.hospitalName.orEmpty(), style = MaterialTheme.typography.titleMedium)
+                }
+            }
+            item { TabRow(selectedTabIndex = tab, containerColor = Color.White, contentColor = Primary) {
+                Tab(tab == 0, { tab = 0 }, text = { Text("음성 기록", color = if (tab == 0) Primary else Muted) })
+                Tab(tab == 1, { tab = 1 }, text = { Text("요약 메모", color = if (tab == 1) Primary else Muted) })
             } }
             if (tab == 0) {
-                item { SafetyNotice("화자 A/B는 모델이 제공한 라벨입니다. 사용자가 의사/나 역할을 확인하기 전에는 임의로 단정하지 않습니다.") }
+                if (consultation.status == "RUNNING" || consultation.status == "QUEUED") item { LoadingCard("AI가 대화 내용을 기록하는 중입니다.") }
+                if (consultation.status == "FAILED") item {
+                    ErrorCard(
+                        consultation.failureMessage ?: "AI 기록 생성에 실패했습니다.",
+                    ) { viewModel.retryConsultation(consultation.id) }
+                }
                 items(consultation.transcript, key = { it.id }) { segment ->
-                    Card(Modifier.fillMaxWidth().clickable { }, shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = SurfaceSoft)) {
-                        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.Top) {
-                            Box(Modifier.size(42.dp).clip(CircleShape).background(Primary.copy(alpha = .15f)), contentAlignment = Alignment.Center) { Text(segment.speaker, color = Primary, fontWeight = FontWeight.Bold) }
-                            Column(Modifier.padding(start = 12.dp)) {
-                                Text(formatDuration(segment.startMs), color = Primary, fontWeight = FontWeight.Bold)
-                                Text(segment.text)
-                                Text("눌러서 이 시점부터 재생", color = Muted, style = MaterialTheme.typography.bodyMedium)
+                    Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.Top) {
+                        Box(Modifier.size(32.dp).clip(CircleShape).background(Color(0xFFF2F2F2)), contentAlignment = Alignment.Center) {
+                            Text(if (segment.speaker == "의사") "의" else if (segment.speaker == "환자") "나" else "?", fontWeight = FontWeight.Bold, color = Muted)
+                        }
+                        Column(Modifier.padding(start = 10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(segment.speaker, fontWeight = FontWeight.Bold)
+                                Text(" ${formatDuration(segment.startMs)}", color = Color(0xFFB9BEC5), style = MaterialTheme.typography.bodyMedium)
                             }
+                            Text(segment.text, lineHeight = MaterialTheme.typography.bodyLarge.lineHeight)
                         }
                     }
                 }
             } else {
                 val summary = consultation.summary
-                item { SafetyNotice("의료진의 실제 지시를 우선하세요. 전사·요약에는 오류가 있을 수 있습니다.") }
                 if (summary == null) item { EmptyCard("요약 생성에 실패했거나 분석 중입니다.") }
                 else {
-                    item { SummaryCard("전체 요약", summary.overallSummary) }
+                    item { SummaryCard("전체 요약", summary.overallSummary, Color(0xFFF0F7FF)) }
                     item { SummaryCard("주요 증상", summary.symptoms.joinToString("\n") { "• ${it.text}" }.ifBlank { "기록 없음" }) }
-                    item { SummaryCard("처방 및 복용 안내", summary.prescriptionAndInstructions.joinToString("\n") { "• ${it.text}" }.ifBlank { "확인된 내용 없음" }) }
                     item { SummaryCard("검사·진단", summary.testsAndAssessment.joinToString("\n") { "• ${it.text}" }.ifBlank { "확인된 내용 없음" }) }
-                    item { SummaryCard("추후 일정/주의사항", summary.followUps.joinToString("\n") { "• ${it.text}" }.ifBlank { "확인된 내용 없음" }) }
+                    item { SummaryCard("처방 및 복용 안내", summary.prescriptionAndInstructions.joinToString("\n") { "• ${it.text}" }.ifBlank { "확인된 내용 없음" }) }
+                    item { SummaryCard("추후 일정 및 주의사항", summary.followUps.joinToString("\n") { "• ${it.text}" }.ifBlank { "확인된 내용 없음" }) }
                     if (summary.uncertainties.isNotEmpty()) item { SummaryCard("확인 필요", summary.uncertainties.joinToString("\n") { "• ${it.text}" }, Warning.copy(alpha = .13f)) }
+                    item { Text("AI 요약은 참고용입니다. 의료진의 실제 설명과 처방을 우선해 주세요.", color = Muted, style = MaterialTheme.typography.bodyMedium) }
                 }
             }
         }
@@ -623,25 +738,87 @@ fun RecordsScreen(state: AppUiState, padding: PaddingValues, nav: NavHostControl
 @Composable
 fun ChatScreen(state: AppUiState, viewModel: AppViewModel, nav: NavHostController) {
     var input by remember { mutableStateOf("") }
-    Column(Modifier.fillMaxSize().statusBarsPadding().imePadding()) {
-        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = { nav.popBackStack() }, modifier = Modifier.size(48.dp)) { Icon(Icons.Default.ArrowBack, "뒤로가기") }
-            Text("복약 정보 챗봇", style = MaterialTheme.typography.titleLarge)
+    val welcome = listOf(
+        false to "안녕하세요, 메디봇 입니다!",
+        false to "약에 대해 궁금한 점을 물어봐 주세요!",
+    )
+    val visibleMessages = welcome + state.chatMessages
+    Column(Modifier.fillMaxSize().statusBarsPadding().imePadding().background(Color.White)) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { nav.popBackStack() }, modifier = Modifier.size(48.dp)) { Icon(Icons.Default.ArrowBack, "뒤로가기", modifier = Modifier.size(30.dp)) }
+            Text("메디봇", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(start = 6.dp))
         }
-        SafetyNotice("의사·약사를 대체하지 않으며 공식 근거가 없으면 안전성을 판단하지 않습니다.", Modifier.padding(horizontal = 16.dp))
-        LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            if (state.chatMessages.isEmpty()) item { EmptyCard("복용법이나 기록에 관해 질문해 보세요. 약물 안전성은 공식 근거가 있을 때만 설명합니다.") }
-            items(state.chatMessages) { (isUser, message) ->
-                Box(Modifier.fillMaxWidth(), contentAlignment = if (isUser) Alignment.CenterEnd else Alignment.CenterStart) {
-                    Text(message.ifBlank { "답변을 작성하는 중..." }, Modifier.widthIn(max = 310.dp).clip(RoundedCornerShape(18.dp)).background(if (isUser) Primary else SurfaceSoft).padding(14.dp), color = if (isUser) Color.White else Ink)
+        LazyColumn(
+            Modifier.weight(1f).fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
+        ) {
+            items(visibleMessages) { (isUser, message) ->
+                if (isUser) {
+                    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
+                        Text(
+                            message,
+                            Modifier.widthIn(max = 300.dp).clip(RoundedCornerShape(22.dp)).background(Color(0xFFB9DCFA)).padding(horizontal = 18.dp, vertical = 14.dp),
+                            color = Ink,
+                            style = MaterialTheme.typography.bodyLarge,
+                        )
+                        Text("방금", color = Muted, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 5.dp))
+                    }
+                } else {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+                        Image(
+                            painter = painterResource(R.drawable.medibot_pill_button),
+                            contentDescription = "메디봇",
+                            modifier = Modifier.size(58.dp),
+                        )
+                        Column(Modifier.padding(start = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("메디봇", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                message.ifBlank { "답변을 작성하는 중..." },
+                                Modifier.widthIn(max = 290.dp).clip(RoundedCornerShape(22.dp)).background(Color(0xFFF0F6FC)).padding(horizontal = 18.dp, vertical = 14.dp),
+                                color = Ink,
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                            Text("방금", color = Muted, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
                 }
             }
         }
-        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(input, { input = it }, modifier = Modifier.weight(1f), placeholder = { Text("질문을 입력하세요") }, maxLines = 4, shape = RoundedCornerShape(20.dp))
-            IconButton(onClick = { val message = input; input = ""; viewModel.sendChat(message) }, enabled = input.isNotBlank() && !state.chatLoading, modifier = Modifier.size(56.dp)) {
-                Icon(Icons.Default.Send, contentDescription = "메시지 보내기", tint = Primary)
+        Text("의료진을 대신하지 않으며, 복용 변경 전 의사·약사와 확인해 주세요.", color = Muted, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 24.dp))
+        Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedTextField(
+                input,
+                { input = it },
+                modifier = Modifier.weight(1f),
+                placeholder = { Text("무엇이든 물어보세요", color = Color(0xFFB8BDC6)) },
+                maxLines = 3,
+                shape = RoundedCornerShape(30.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = Color(0xFFF5F5F5),
+                    unfocusedContainerColor = Color(0xFFF5F5F5),
+                    focusedBorderColor = Color.Transparent,
+                    unfocusedBorderColor = Color.Transparent,
+                ),
+            )
+            FilledIconButton(
+                onClick = { val message = input.trim(); input = ""; viewModel.sendChat(message) },
+                enabled = input.isNotBlank() && !state.chatLoading,
+                modifier = Modifier.size(58.dp),
+                colors = IconButtonDefaults.filledIconButtonColors(containerColor = if (input.isBlank()) Color(0xFFC6C9D1) else Primary),
+            ) {
+                Icon(Icons.Default.Send, contentDescription = "메시지 보내기", tint = Color.White, modifier = Modifier.size(28.dp))
             }
+        }
+    }
+}
+
+@Composable
+private fun SimpleProfileHeader(title: String) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+        Box(Modifier.size(46.dp).clip(CircleShape).background(Color(0xFFF4F4F4)), contentAlignment = Alignment.Center) {
+            Text("김", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
         }
     }
 }

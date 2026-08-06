@@ -31,6 +31,7 @@ data class RecordingUiState(
     val elapsedMs: Long = 0,
     val stoppedFile: File? = null,
     val error: String? = null,
+    val inputWarning: String? = null,
 )
 
 data class AppUiState(
@@ -66,6 +67,8 @@ class AppViewModel @Inject constructor(
     private val amplitudeProcessor = AmplitudeProcessor()
     private var lastElapsedUiUpdateMs = 0L
     private var lastAmplitudeLogAtMs = 0L
+    private var consecutiveSilentInputMs = 0f
+    private var inputWarningVisible = false
 
     init {
         refreshHome()
@@ -167,8 +170,13 @@ class AppViewModel @Inject constructor(
 
     fun loadConsultations() = viewModelScope.launch {
         _state.update { it.copy(consultations = LoadState.Loading) }
-        val values = repository.consultations()
-        _state.update { it.copy(consultations = if (values.isEmpty()) LoadState.Empty else LoadState.Content(values)) }
+        repository.consultations()
+            .onSuccess { values ->
+                _state.update { it.copy(consultations = if (values.isEmpty()) LoadState.Empty else LoadState.Content(values)) }
+            }
+            .onFailure {
+                _state.update { it.copy(consultations = LoadState.Error("진료 기록 서버에 연결할 수 없습니다.")) }
+            }
     }
 
     fun startRecording(): Boolean {
@@ -177,6 +185,8 @@ class AppViewModel @Inject constructor(
         amplitudeProcessor.reset()
         lastElapsedUiUpdateMs = 0L
         lastAmplitudeLogAtMs = 0L
+        consecutiveSilentInputMs = 0f
+        inputWarningVisible = false
         _waveform.value = emptyWaveform()
         _state.update {
             it.copy(recording = RecordingUiState(active = true, stoppedFile = file))
@@ -191,6 +201,22 @@ class AppViewModel @Inject constructor(
                     recordedDurationMs: Long,
                 ) {
                     val amplitude = amplitudeProcessor.process(samples, sampleCount, frameDurationMs)
+                    consecutiveSilentInputMs = if (amplitude.dbfs <= AmplitudeProcessor.NOISE_FLOOR_DBFS) {
+                        consecutiveSilentInputMs + frameDurationMs
+                    } else {
+                        0f
+                    }
+                    val shouldWarnAboutInput = consecutiveSilentInputMs >= SILENT_INPUT_WARNING_MS
+                    if (shouldWarnAboutInput != inputWarningVisible) {
+                        inputWarningVisible = shouldWarnAboutInput
+                        _state.update { state ->
+                            state.copy(recording = state.recording.copy(
+                                inputWarning = if (shouldWarnAboutInput) {
+                                    "마이크 입력이 감지되지 않습니다. 에뮬레이터 호스트 마이크 옵션과 권한을 확인해 주세요."
+                                } else null,
+                            ))
+                        }
+                    }
                     _waveform.update { values ->
                         ArrayList<WaveformBar>(WAVEFORM_SAMPLE_COUNT).apply {
                             for (index in 1 until values.size) add(values[index])
@@ -220,6 +246,15 @@ class AppViewModel @Inject constructor(
                     }
                 }
 
+                override fun onInputRecovery(reason: String, attempt: Int) {
+                    inputWarningVisible = true
+                    _state.update { state ->
+                        state.copy(recording = state.recording.copy(
+                            inputWarning = "$reason 마이크를 자동으로 재연결하고 있습니다. ($attempt/3)",
+                        ))
+                    }
+                }
+
                 override fun onRecordingError(message: String, cause: Throwable?) {
                     if (BuildConfig.DEBUG) Log.e(AMPLITUDE_LOG_TAG, message, cause)
                     _state.update { state ->
@@ -227,8 +262,20 @@ class AppViewModel @Inject constructor(
                     }
                 }
 
-                override fun onRecordingFinalized(recordedDurationMs: Long, error: Throwable?) {
+                override fun onRecordingFinalized(
+                    recordedDurationMs: Long,
+                    quality: PcmAacRecorder.RecordingQuality,
+                    error: Throwable?,
+                ) {
                     recorder = null
+                    if (BuildConfig.DEBUG) {
+                        Log.i(
+                            AMPLITUDE_LOG_TAG,
+                            "finalized durationMs=$recordedDurationMs audibleMs=${quality.audibleDurationMs} " +
+                                "trailingSilenceMs=${quality.trailingSilenceMs} maxPeak=${quality.maxPeakAmplitude} " +
+                                "systemSilencedMs=${quality.systemSilencedDurationMs}",
+                        )
+                    }
                     _state.update { state ->
                         state.copy(recording = state.recording.copy(
                             active = false,
@@ -236,7 +283,10 @@ class AppViewModel @Inject constructor(
                             finalizing = false,
                             readyToSave = error == null && recordedDurationMs > 0L,
                             elapsedMs = recordedDurationMs,
-                            error = state.recording.error ?: error?.let { "녹음 파일을 마무리할 수 없습니다: ${it.localizedMessage}" },
+                            error = state.recording.error ?: error?.let {
+                                if (it is PcmAacRecorder.NoAudioSignalException) it.message
+                                else "녹음 파일을 마무리할 수 없습니다: ${it.localizedMessage}"
+                            },
                         ))
                     }
                 }
@@ -308,8 +358,32 @@ class AppViewModel @Inject constructor(
         if (!recording.readyToSave) return@launch
         val file = recording.stoppedFile ?: return@launch
         val result = repository.uploadRecording(file, title, hospital, recording.elapsedMs)
-        _state.update { it.copy(snackbar = if (result.isSuccess) "녹음을 저장하고 분석을 시작했습니다." else "로컬에 저장했습니다. 네트워크 연결 시 다시 업로드합니다.") }
-        loadConsultations()
+        _state.update { it.copy(snackbar = if (result.isSuccess) "녹음을 저장하고 AI 기록 생성을 시작했습니다." else "업로드에 실패했습니다. 서버 연결을 확인해 주세요.") }
+        val accepted = result.getOrNull()
+        if (accepted == null) loadConsultations() else pollConsultation(accepted.resourceId)
+    }
+
+    private suspend fun pollConsultation(id: String) {
+        repeat(CONSULTATION_POLL_ATTEMPTS) {
+            val values = repository.consultations().getOrElse {
+                _state.update { state -> state.copy(consultations = LoadState.Error("AI 기록 처리 상태를 확인할 수 없습니다.")) }
+                return
+            }
+            _state.update { state -> state.copy(consultations = if (values.isEmpty()) LoadState.Empty else LoadState.Content(values)) }
+            val status = values.firstOrNull { it.id == id }?.status
+            if (status == "SUCCEEDED" || status == "FAILED") return
+            delay(CONSULTATION_POLL_INTERVAL_MS)
+        }
+    }
+
+    fun retryConsultation(id: String) = viewModelScope.launch {
+        val result = repository.retryConsultation(id)
+        if (result.isSuccess) {
+            _state.update { it.copy(snackbar = "AI 기록 생성을 다시 시작했습니다.") }
+            pollConsultation(id)
+        } else {
+            _state.update { it.copy(snackbar = "다시 시도할 수 없습니다. 서버를 재시작했다면 새로 녹음해 주세요.") }
+        }
     }
 
     fun sendChat(message: String) = viewModelScope.launch {
@@ -338,6 +412,9 @@ class AppViewModel @Inject constructor(
         private const val AMPLITUDE_LOG_TAG = "RecorderAmplitude"
         private const val AMPLITUDE_LOG_INTERVAL_MS = 100L
         private const val ELAPSED_UI_INTERVAL_MS = 200L
+        private const val SILENT_INPUT_WARNING_MS = 5_000f
+        private const val CONSULTATION_POLL_INTERVAL_MS = 2_000L
+        private const val CONSULTATION_POLL_ATTEMPTS = 90
         private const val WAVEFORM_SAMPLE_COUNT = 48
 
         private fun emptyWaveform() = List(WAVEFORM_SAMPLE_COUNT) { WaveformBar() }

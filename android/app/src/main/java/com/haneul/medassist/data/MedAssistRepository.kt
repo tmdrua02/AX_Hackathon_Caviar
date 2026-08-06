@@ -99,7 +99,7 @@ class MedAssistRepository @Inject constructor(
     suspend fun saveCheck(check: InteractionCheck): InteractionCheck = runCatching { api.saveCheck(check.id) }
         .getOrElse { check.copy(saved = true) }
 
-    suspend fun consultations(): List<Consultation> = runCatching { api.consultations() }.getOrElse { listOf(demoConsultation()) }
+    suspend fun consultations(): Result<List<Consultation>> = runCatching { api.consultations() }
 
     suspend fun uploadRecording(file: File, title: String, hospital: String, durationMs: Long): Result<Accepted> = runCatching {
         api.uploadConsultation(
@@ -111,6 +111,8 @@ class MedAssistRepository @Inject constructor(
             UUID.randomUUID().toString(),
         )
     }
+
+    suspend fun retryConsultation(id: String): Result<Accepted> = runCatching { api.retryConsultation(id) }
 
     suspend fun chat(message: String, onDelta: (String) -> Unit) = withContext(Dispatchers.IO) {
         try {
@@ -169,9 +171,9 @@ class MedAssistRepository @Inject constructor(
     }
 
     private fun demoConsultation(): Consultation {
-        val first = TranscriptSegment("segment-1", "A", 0, 8200, "어디가 가장 불편해서 오셨어요?")
-        val second = TranscriptSegment("segment-2", "B", 8400, 18300, "어제부터 목이 따갑고 미열이 있었어요.")
-        val third = TranscriptSegment("segment-3", "A", 19000, 31000, "물을 충분히 드시고 증상이 심해지면 다시 내원하세요.")
+        val first = TranscriptSegment("segment-1", "의사", 0, 8200, "어디가 가장 불편해서 오셨어요?")
+        val second = TranscriptSegment("segment-2", "환자", 8400, 18300, "어제부터 목이 따갑고 미열이 있었어요.")
+        val third = TranscriptSegment("segment-3", "의사", 19000, 31000, "물을 충분히 드시고 증상이 심해지면 다시 내원하세요.")
         return Consultation(
             "44444444-4444-4444-4444-444444444444", "감기 증상 진료", "하늘내과(데모)",
             "2026-08-03T01:30:00Z", 31_000, "SUCCEEDED", listOf(first, second, third),
@@ -179,7 +181,7 @@ class MedAssistRepository @Inject constructor(
                 "목 불편감과 미열에 관해 상담한 데모 진료 기록입니다.",
                 listOf(SummaryItem("목 따가움과 미열", listOf(second.id))), emptyList(), emptyList(),
                 listOf(SummaryItem("증상이 심해지면 재내원", listOf(third.id))),
-                listOf(SummaryItem("화자 A/B 역할은 사용자 확인 필요", listOf(first.id, second.id))),
+                listOf(SummaryItem("화자 구분은 AI 추정이므로 원음 확인 필요", listOf(first.id, second.id))),
             ),
         )
     }
@@ -192,4 +194,3 @@ class MedAssistRepository @Inject constructor(
         return "결론: 현재 질문만으로 약물 안전성을 확인할 수 없습니다.\n확인된 근거: 공식 상호작용 근거가 연결되지 않았습니다.\n할 일: 제품명과 성분을 확인한 뒤 의사·약사에게 상담하세요."
     }
 }
-

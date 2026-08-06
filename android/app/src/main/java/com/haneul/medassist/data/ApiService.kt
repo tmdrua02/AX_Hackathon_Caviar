@@ -61,6 +61,9 @@ interface ApiService {
         @Header("Idempotency-Key") key: String,
     ): Accepted
 
+    @POST("api/v1/consultations/{id}/retry")
+    suspend fun retryConsultation(@Path("id") id: String): Accepted
+
     @POST("api/v1/chat/sessions")
     suspend fun createChat(): ChatSession
 
@@ -69,4 +72,3 @@ interface ApiService {
 
     companion object { const val DEMO_USER = "00000000-0000-0000-0000-000000000001" }
 }
-
