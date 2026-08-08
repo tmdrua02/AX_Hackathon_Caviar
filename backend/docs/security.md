@@ -1,0 +1,29 @@
+# Security
+
+- `DATA_GO_KR_SERVICE_KEY`는 네 공공 API가 공통으로 사용하는 하나의 서버 환경변수로만 관리한다. 기존 환경변수 이름은 유지한다.
+- `.env`와 `application-local.*`는 Git에서 제외한다.
+- 외부 요청 URL 및 query string wire logging을 활성화하지 않는다.
+- 예외 응답에는 서비스키, OCR 원문, 외부 body를 포함하지 않는다.
+- OCR 원문 전체를 일반 로그에 남기지 않는다.
+- 처방전 이미지 기능을 구현할 때 MIME type과 크기를 검증하고 기본적으로 처리 직후 삭제한다.
+- 운영 환경은 HTTPS를 강제한다.
+- 사용자 기능을 구현할 때 모든 draft, medication, interaction ID 조회에 `user_id` 소유권 조건을 포함한다.
+- 외부 API 원문 저장이 필요하면 서비스키가 포함된 요청 URL이 아니라 응답 body와 안전한 source metadata만 저장한다.
+- 공공 API 요청 URL 전체와 `serviceKey` query parameter를 로그에 남기지 않는다. 불가피하게 URI가 포함된 문자열은 공통 마스킹 함수를 거친다.
+- HTTP client wire logging은 기본 비활성 상태로 유지한다.
+- 서비스키가 비어 있어도 서버는 시작하되 실제 요청은 `PUBLIC_API_NOT_CONFIGURED`로 거부한다.
+- 서비스키 설정 객체의 문자열 표현, 로그, 애플리케이션 예외 메시지에 키 원문을 포함하지 않는다.
+- 공공 API 응답은 먼저 byte 배열로 받고 엄격한 charset decoder를 통과시킨다. 디코딩 오류나 replacement character를 정상 의료 데이터로 저장하지 않는다.
+- JSON 응답에 charset이 없을 때만 UTF-8 기본값을 사용한다. EUC-KR이나 CP949를 실측 없이 추측해 고정하지 않는다.
+- 실제 운영 응답의 `Content-Type` 및 charset 헤더는 서비스키가 준비된 수동 통합 테스트에서 확인한다.
+- 이미 percent-encoded된 서비스키는 `ServiceKeyEncoder`에서 decode 후 정확히 한 번 encode하고, URI는 `build(true)`로 조립한다. `%2F`를 `%252F`로 만드는 form-style 재인코딩과 `build(false)`를 사용하지 않는다.
+- DUR과 e약은요는 제품 허가정보와 credentials만 공유하고 각각 별도 `RestClient`와 `PublicDataCallExecutor`를 사용해 장애·circuit 상태를 격리한다.
+- opt-in 외부 API 테스트는 인증값과 전체 URI/query string 및 전체 provider 응답을 테스트 리포트에 기록하지 않는다.
+- e약은요의 `efcyQesitm` 등 공식 의료 텍스트는 원문을 보존하며 HTML 표시 정제 과정에서 요약하거나 의료 의미를 바꾸지 않는다.
+- 정상 빈 응답만 negative cache할 수 있고 인증·quota·timeout·provider·인코딩 오류는 캐시하지 않는다.
+- 건강기능식품 제품 기본정보를 원재료 또는 상호작용 근거로 승격하지 않으며, 미조회 원재료를 빈 목록인 것처럼 기록하지 않는다.
+- catalog source 원문과 전체 Evidence Bundle을 debug/info 로그에 기록하지 않는다. startup 로그는 resource 경로와 안전한 validation code만 남긴다.
+- Android 소스에는 data.go.kr 서비스키나 공공 API 직접 호출 URL을 포함하지 않는다. 앱은 백엔드의 additive REST 계약만 사용한다.
+- `OPENAI_API_KEY`는 서버 환경변수로만 읽고 Android, YAML plaintext, fixture 또는 exception에 포함하지 않는다.
+- OpenAI 전체 prompt, `SupplementInteractionExplanationRequest`, Evidence 원문과 전체 응답은 production 로그에 기록하지 않는다.
+- LLM provider 오류는 안전한 category로만 변환하며 deterministic severity·coverage·failedSteps를 변경하지 않는다.

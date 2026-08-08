@@ -5,6 +5,7 @@ import androidx.room.Room
 import com.haneul.medassist.BuildConfig
 import com.haneul.medassist.data.ApiService
 import com.haneul.medassist.data.MedAssistDatabase
+import com.haneul.medassist.data.SupplementApiService
 import com.haneul.medassist.ocr.MlKitKoreanOcrEngine
 import com.haneul.medassist.ocr.OcrEngine
 import retrofit2.converter.kotlinx.serialization.asConverterFactory
@@ -50,6 +51,14 @@ object AppModule {
         .client(client)
         .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
         .build().create(ApiService::class.java)
+
+    @Provides
+    @Singleton
+    fun supplementApi(client: OkHttpClient, json: Json): SupplementApiService = Retrofit.Builder()
+        .baseUrl(BuildConfig.SUPPLEMENT_API_BASE_URL)
+        .client(client)
+        .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
+        .build().create(SupplementApiService::class.java)
 
     @Provides
     @Singleton

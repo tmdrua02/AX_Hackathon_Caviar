@@ -18,7 +18,7 @@
         android:label="하늘약손"
         android:supportsRtl="true"
         android:theme="@style/Theme.MedAssist"
-        android:usesCleartextTraffic="true">
+        android:usesCleartextTraffic="${usesCleartextTraffic}">
         <activity
             android:name=".MainActivity"
             android:exported="true">

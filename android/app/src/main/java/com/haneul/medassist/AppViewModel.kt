@@ -15,6 +15,7 @@ import com.haneul.medassist.recording.WaveformBar
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -45,6 +46,11 @@ data class AppUiState(
     val draftLoading: Boolean = false,
     val interactionAccepted: Accepted? = null,
     val interaction: LoadState<InteractionCheck> = LoadState.Idle,
+    val supplementSearch: LoadState<SupplementProductSearchResponse> = LoadState.Idle,
+    val selectedMedicationProductCode: String? = null,
+    val selectedSupplement: SupplementSearchCandidateDto? = null,
+    val selectedSupplementStatementNo: String? = null,
+    val supplementInteraction: LoadState<SupplementInteractionCheckResponse> = LoadState.Idle,
     val consultations: LoadState<List<Consultation>> = LoadState.Idle,
     val recording: RecordingUiState = RecordingUiState(),
     val chatMessages: List<Pair<Boolean, String>> = emptyList(),
@@ -64,6 +70,9 @@ class AppViewModel @Inject constructor(
     private val _waveform = MutableStateFlow(emptyWaveform())
     val waveform: StateFlow<List<WaveformBar>> = _waveform.asStateFlow()
     private var recorder: PcmAacRecorder? = null
+    private var supplementSearchJob: Job? = null
+    private var supplementInteractionJob: Job? = null
+    private val supplementInteractionStateMachine = SupplementInteractionRequestStateMachine()
     private val amplitudeProcessor = AmplitudeProcessor()
     private var lastElapsedUiUpdateMs = 0L
     private var lastAmplitudeLogAtMs = 0L
@@ -131,8 +140,86 @@ class AppViewModel @Inject constructor(
         val draft = _state.value.draft ?: return@launch
         _state.update { it.copy(draftLoading = true) }
         val medication = repository.confirmDraft(draft)
-        _state.update { it.copy(newMedication = medication, draftLoading = false) }
+        supplementInteractionJob?.cancel()
+        supplementInteractionStateMachine.reset()
+        _state.update {
+            it.copy(
+                newMedication = medication,
+                selectedMedicationProductCode = medication.productCode,
+                supplementInteraction = supplementInteractionStateMachine.state,
+                draftLoading = false,
+            )
+        }
         onConfirmed()
+    }
+
+    fun searchSupplementProducts(query: String) {
+        val normalized = query.trim()
+        if (normalized.isBlank() || supplementSearchJob?.isActive == true) return
+        supplementSearchJob = viewModelScope.launch {
+            _state.update { it.copy(supplementSearch = LoadState.Loading) }
+            repository.searchSupplementProducts(normalized)
+                .onSuccess { response ->
+                    _state.update {
+                        it.copy(
+                            supplementSearch = if (response.candidates.isEmpty()) LoadState.Empty else LoadState.Content(response),
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    _state.update { it.copy(supplementSearch = LoadState.Error(supplementInteractionErrorMessage(error))) }
+                }
+        }
+    }
+
+    fun selectSupplementCandidate(candidate: SupplementSearchCandidateDto) {
+        supplementInteractionJob?.cancel()
+        supplementInteractionStateMachine.reset()
+        _state.update {
+            it.copy(
+                selectedSupplement = candidate,
+                selectedSupplementStatementNo = candidate.sttemntNo,
+                supplementInteraction = supplementInteractionStateMachine.state,
+            )
+        }
+    }
+
+    fun checkSupplementInteraction(
+        medicationProductCode: String,
+        supplementStatementNo: String,
+    ): Boolean {
+        val key = SupplementInteractionRequestKey(
+            medicationProductCode = medicationProductCode.trim(),
+            supplementStatementNo = supplementStatementNo.trim(),
+        )
+        val token = runCatching { supplementInteractionStateMachine.begin(key) }.getOrNull() ?: return false
+        _state.update {
+            it.copy(
+                selectedMedicationProductCode = key.medicationProductCode,
+                selectedSupplementStatementNo = key.supplementStatementNo,
+                supplementInteraction = supplementInteractionStateMachine.state,
+            )
+        }
+        supplementInteractionJob = viewModelScope.launch {
+            repository.checkSupplementInteraction(key.medicationProductCode, key.supplementStatementNo)
+                .onSuccess { response ->
+                    if (supplementInteractionStateMachine.succeed(token, response)) {
+                        _state.update { it.copy(supplementInteraction = supplementInteractionStateMachine.state) }
+                    }
+                }
+                .onFailure { error ->
+                    if (supplementInteractionStateMachine.fail(token, supplementInteractionErrorMessage(error))) {
+                        _state.update { it.copy(supplementInteraction = supplementInteractionStateMachine.state) }
+                    }
+                }
+        }
+        return true
+    }
+
+    fun retrySupplementInteraction(): Boolean {
+        val medicationCode = _state.value.selectedMedicationProductCode ?: return false
+        val supplementCode = _state.value.selectedSupplementStatementNo ?: return false
+        return checkSupplementInteraction(medicationCode, supplementCode)
     }
 
     fun startAnalysis(onStarted: () -> Unit) = viewModelScope.launch {
@@ -404,6 +491,8 @@ class AppViewModel @Inject constructor(
     fun consumeSnackbar() = _state.update { it.copy(snackbar = null) }
 
     override fun onCleared() {
+        supplementSearchJob?.cancel()
+        supplementInteractionJob?.cancel()
         recorder?.stop()
         super.onCleared()
     }
@@ -420,3 +509,12 @@ class AppViewModel @Inject constructor(
         private fun emptyWaveform() = List(WAVEFORM_SAMPLE_COUNT) { WaveformBar() }
     }
 }
+
+internal fun supplementInteractionErrorMessage(error: Throwable): String =
+    when ((error as? SupplementInteractionRequestException)?.failure) {
+        SupplementInteractionTransportFailure.TIMEOUT -> "서버 응답 시간이 초과되었습니다. 다시 시도해 주세요."
+        SupplementInteractionTransportFailure.NETWORK -> "약품 서버에 연결할 수 없습니다. 서버와 네트워크 상태를 확인해 주세요."
+        SupplementInteractionTransportFailure.MALFORMED_RESPONSE -> "서버 응답을 확인할 수 없습니다. 잠시 후 다시 시도해 주세요."
+        SupplementInteractionTransportFailure.HTTP -> "병용 정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요."
+        null -> "병용 정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요."
+    }

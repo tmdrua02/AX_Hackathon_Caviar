@@ -26,6 +26,7 @@ class MedAssistRepository @Inject constructor(
     private val database: MedAssistDatabase,
     private val client: OkHttpClient,
     private val json: Json,
+    private val supplementInteractionRemoteDataSource: SupplementInteractionRemoteDataSource,
 ) {
     suspend fun home(): LoadState<HomeResponse> = try {
         val remote = api.home()
@@ -55,6 +56,15 @@ class MedAssistRepository @Inject constructor(
                 if (taken) Instant.now().toString() else null, medication.version),
         )
     }
+
+    suspend fun searchSupplementProducts(query: String): Result<SupplementProductSearchResponse> =
+        supplementInteractionRemoteDataSource.searchSupplements(query)
+
+    suspend fun checkSupplementInteraction(
+        medicationProductCode: String,
+        supplementStatementNo: String,
+    ): Result<SupplementInteractionCheckResponse> =
+        supplementInteractionRemoteDataSource.check(medicationProductCode, supplementStatementNo)
 
     suspend fun createDraft(front: Uri, back: Uri, resolver: ContentResolver, ocrText: String): PrescriptionDraft =
         runCatching {
