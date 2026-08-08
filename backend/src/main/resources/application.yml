@@ -116,3 +116,17 @@ medassist:
     maximum-candidates: 5
   supplement-interaction-rules:
     resource: ${SUPPLEMENT_INTERACTION_RULES_RESOURCE:classpath:supplement-interaction-rules.json}
+    require-verified-manifest: ${SUPPLEMENT_INTERACTION_RULES_REQUIRE_VERIFIED_MANIFEST:true}
+  llm:
+    openai:
+      base-url: ${OPENAI_BASE_URL:https://api.openai.com}
+      responses-path: ${OPENAI_RESPONSES_PATH:/v1/responses}
+      api-key: ${OPENAI_API_KEY:}
+      model: ${OPENAI_CHAT_MODEL:gpt-4o-mini}
+      connect-timeout: ${OPENAI_CONNECT_TIMEOUT:3s}
+      read-timeout: ${OPENAI_READ_TIMEOUT:20s}
+      max-retries: ${OPENAI_MAX_RETRIES:1}
+      retry-backoff: ${OPENAI_RETRY_BACKOFF:250ms}
+      max-concurrent-calls: ${OPENAI_MAX_CONCURRENT_CALLS:4}
+      circuit-failure-threshold: ${OPENAI_CIRCUIT_FAILURE_THRESHOLD:3}
+      circuit-open-duration: ${OPENAI_CIRCUIT_OPEN_DURATION:30s}

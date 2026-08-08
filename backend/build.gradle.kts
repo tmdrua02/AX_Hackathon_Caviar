@@ -8,6 +8,10 @@ plugins {
 group = "com.haneul"
 version = "0.0.1-SNAPSHOT"
 
+springBoot {
+	mainClass.set("com.haneul.medassist.MedassistBackendApplicationKt")
+}
+
 java {
 	toolchain {
 		languageVersion = JavaLanguageVersion.of(17)
@@ -47,7 +51,19 @@ tasks.withType<Test>().configureEach {
 tasks.named<Test>("test") {
 	useJUnitPlatform {
 		excludeTags("external-api")
+		excludeTags("external-llm")
 	}
+}
+
+tasks.register<Test>("externalLlmTest") {
+	description = "Runs an opt-in OpenAI presentation test with synthetic evidence only."
+	group = "verification"
+	testClassesDirs = sourceSets["test"].output.classesDirs
+	classpath = sourceSets["test"].runtimeClasspath
+	useJUnitPlatform {
+		includeTags("external-llm")
+	}
+	shouldRunAfter(tasks.named("test"))
 }
 
 tasks.register<Test>("externalApiTest") {
@@ -59,4 +75,49 @@ tasks.register<Test>("externalApiTest") {
 		includeTags("external-api")
 	}
 	shouldRunAfter(tasks.named("test"))
+}
+
+tasks.register<JavaExec>("validateSupplementRuleCatalog") {
+	description = "Validates a supplement rule catalog and writes a data-quality report."
+	group = "verification"
+	dependsOn(tasks.named("classes"))
+	classpath = sourceSets["main"].runtimeClasspath
+	mainClass.set("com.haneul.medassist.repository.SupplementRuleCatalogCli")
+	doFirst {
+		val catalogPath = providers.gradleProperty("catalogPath").orNull
+			?: error("-PcatalogPath is required")
+		val reportPath = providers.gradleProperty("reportPath").orNull
+			?: layout.buildDirectory.file("reports/supplement-rule-catalog-validation.json").get().asFile.absolutePath
+		args("--mode=validate", "--catalog=$catalogPath", "--report=$reportPath")
+	}
+}
+
+tasks.register<JavaExec>("buildVerifiedSupplementRuleCatalog") {
+	description = "Builds a reviewer-approved supplement rule catalog without modifying its source file."
+	group = "build"
+	dependsOn(tasks.named("classes"))
+	classpath = sourceSets["main"].runtimeClasspath
+	mainClass.set("com.haneul.medassist.repository.SupplementRuleCatalogCli")
+	doFirst {
+		val catalogPath = providers.gradleProperty("catalogPath").orNull
+			?: error("-PcatalogPath is required")
+		val reviewer = providers.gradleProperty("reviewer").orNull
+			?: error("-Previewer is required")
+		val catalogVersion = providers.gradleProperty("catalogVersion").orNull
+			?: error("-PcatalogVersion is required")
+		val outputPath = providers.gradleProperty("outputPath").orNull
+			?: error("-PoutputPath is required")
+		val reportPath = providers.gradleProperty("reportPath").orNull
+			?: layout.buildDirectory.file("reports/supplement-rule-catalog-validation.json").get().asFile.absolutePath
+		val generatedBy = providers.gradleProperty("generatedBy").orNull ?: reviewer
+		args(
+			"--mode=build-verified",
+			"--catalog=$catalogPath",
+			"--report=$reportPath",
+			"--reviewer=$reviewer",
+			"--catalog-version=$catalogVersion",
+			"--output=$outputPath",
+			"--generated-by=$generatedBy",
+		)
+	}
 }

@@ -8,6 +8,7 @@ import org.springframework.context.annotation.Configuration
 import org.springframework.http.client.JdkClientHttpRequestFactory
 import org.springframework.web.client.RestClient
 import java.net.http.HttpClient
+import com.haneul.medassist.client.llm.LlmCallExecutor
 
 @Configuration
 class RestClientConfig {
@@ -43,6 +44,10 @@ class RestClientConfig {
     ): PublicDataCallExecutor = factory.create(properties.client)
 
     @Bean
+    @Qualifier("llmCallExecutor")
+    fun llmCallExecutor(properties: OpenAiExplanationProperties): LlmCallExecutor = LlmCallExecutor(properties)
+
+    @Bean
     @Qualifier("drugProductRestClient")
     fun drugProductRestClient(
         properties: DrugProductApiProperties,
@@ -65,6 +70,22 @@ class RestClientConfig {
     fun healthFunctionalFoodRestClient(
         properties: HealthFunctionalFoodApiProperties,
     ): RestClient = restClient(properties.client)
+
+    @Bean
+    @Qualifier("openAiExplanationRestClient")
+    fun openAiExplanationRestClient(properties: OpenAiExplanationProperties): RestClient {
+        val httpClient = HttpClient.newBuilder()
+            .connectTimeout(properties.connectTimeout)
+            .followRedirects(HttpClient.Redirect.NORMAL)
+            .build()
+        val requestFactory = JdkClientHttpRequestFactory(httpClient).apply {
+            setReadTimeout(properties.readTimeout)
+        }
+        return RestClient.builder()
+            .baseUrl(properties.baseUrl)
+            .requestFactory(requestFactory)
+            .build()
+    }
 
     private fun restClient(policy: PublicDataClientPolicy): RestClient {
         val httpClient = HttpClient.newBuilder()

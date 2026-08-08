@@ -12,6 +12,7 @@ import kotlin.test.assertNotNull
     classes = [MedassistBackendApplication::class],
     properties = [
         "medassist.supplement-interaction-rules.resource=classpath:supplement-interaction-rules-valid.json",
+        "medassist.supplement-interaction-rules.require-verified-manifest=false",
     ],
 )
 class SupplementRuleCatalogImportTest {

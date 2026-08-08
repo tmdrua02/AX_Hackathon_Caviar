@@ -1,5 +1,6 @@
 package com.haneul.medassist.domain.evidence
 
+import com.fasterxml.jackson.annotation.JsonIgnore
 import java.time.Instant
 
 enum class EvidenceVerificationStatus {
@@ -31,6 +32,7 @@ data class VerifiedSourceReference(
     val reviewedBy: String? = null,
     val reviewedAt: Instant? = null,
     val notes: String? = null,
+    val sourceVersion: String? = null,
 ) {
     init {
         require(id.isNotBlank()) { "source id must not be blank" }
@@ -45,5 +47,20 @@ data class VerifiedSourceReference(
         }
     }
 
+    @JsonIgnore
     fun isProductionEligible(): Boolean = verificationStatus == EvidenceVerificationStatus.VERIFIED
 }
+
+data class SupplementRuleCatalogAuditMetadata(
+    val available: Boolean,
+    val verified: Boolean,
+    val catalogVersion: String?,
+    val schemaVersion: String?,
+    val catalogChecksum: String?,
+    val loadedAt: Instant,
+    val sourceCount: Int,
+    val canonicalIngredientCount: Int,
+    val productMappingCount: Int,
+    val interactionRuleCount: Int,
+    val validationErrorCodes: List<String>,
+)

@@ -1,6 +1,7 @@
 package com.haneul.medassist.service
 
 import com.haneul.medassist.domain.evidence.VerifiedSourceReference
+import com.haneul.medassist.domain.evidence.SupplementRuleCatalogAuditMetadata
 import com.haneul.medassist.domain.medication.DrugOverview
 import com.haneul.medassist.domain.medication.Ingredient
 import com.haneul.medassist.domain.medication.VerifiedDrugProduct
@@ -9,6 +10,7 @@ import com.haneul.medassist.domain.supplement.SupplementInteractionAnalysisResul
 import com.haneul.medassist.domain.supplement.SupplementInteractionCoverage
 import com.haneul.medassist.domain.supplement.SupplementInteractionEvidence
 import com.haneul.medassist.domain.supplement.SupplementInteractionEvidenceBundle
+import com.haneul.medassist.domain.supplement.SupplementInteractionFailureCode
 import com.haneul.medassist.domain.supplement.SupplementInteractionPairEvaluation
 import com.haneul.medassist.domain.supplement.SupplementInteractionProcessingStatus
 import com.haneul.medassist.domain.supplement.SupplementInteractionRule
@@ -18,6 +20,7 @@ import com.haneul.medassist.domain.supplement.SupplementProductSnapshot
 import com.haneul.medassist.repository.SupplementIngredientCanonicalRepository
 import com.haneul.medassist.repository.SupplementInteractionRuleRepository
 import com.haneul.medassist.repository.SupplementProductIngredientMappingRepository
+import com.haneul.medassist.repository.SupplementRuleCatalogMetadataProvider
 import com.haneul.medassist.repository.VerifiedSourceReferenceRepository
 import org.springframework.stereotype.Service
 import java.time.Instant
@@ -30,14 +33,16 @@ class SupplementInteractionAnalysisService(
     private val canonicalRepository: SupplementIngredientCanonicalRepository,
     private val mappingRepository: SupplementProductIngredientMappingRepository,
     private val ruleRepository: SupplementInteractionRuleRepository,
+    private val catalogMetadataProvider: SupplementRuleCatalogMetadataProvider? = null,
 ) {
     fun analyze(
         medicationProductCode: String,
         supplementStatementNo: String,
     ): SupplementInteractionAnalysisResult {
         val analyzedAt = Instant.now()
-        val failedSteps = linkedSetOf<String>()
-        val blockingFailures = linkedSetOf<String>()
+        val catalogMetadata = catalogMetadata(analyzedAt)
+        val failedSteps = linkedSetOf<SupplementInteractionFailureCode>()
+        val blockingFailures = linkedSetOf<SupplementInteractionFailureCode>()
 
         var medicationProduct: VerifiedDrugProduct? = null
         var medicationIngredients = emptyList<Ingredient>()
@@ -50,84 +55,150 @@ class SupplementInteractionAnalysisService(
                 medicationIngredientsComplete = medication.ingredientsComplete && medication.ingredients.isNotEmpty()
                 medicationOverview = medication.overview
                 failedSteps += medication.optionalFailedSteps
-                if (!medicationIngredientsComplete) blockingFailures += "MEDICATION_INGREDIENTS"
+                if (!medicationIngredientsComplete) {
+                    blockingFailures += SupplementInteractionFailureCode.MEDICATION_INGREDIENT_LOOKUP_FAILED
+                }
             }
 
-            MedicationEvidenceResolution.NotFound -> blockingFailures += "MEDICATION_NOT_FOUND"
-            is MedicationEvidenceResolution.Failed -> blockingFailures += "MEDICATION_PROVIDER:${medication.errorCode}"
+            MedicationEvidenceResolution.NotFound ->
+                blockingFailures += SupplementInteractionFailureCode.MEDICATION_NOT_FOUND
+            is MedicationEvidenceResolution.Failed -> blockingFailures += medication.failureCode
         }
 
         var supplementProduct: SupplementProductSnapshot? = null
         when (val supplement = supplementProvider.resolve(supplementStatementNo.trim())) {
             is SupplementProductEvidenceResolution.Resolved -> supplementProduct = supplement.product
-            SupplementProductEvidenceResolution.NotFound -> blockingFailures += "SUPPLEMENT_NOT_FOUND"
-            is SupplementProductEvidenceResolution.Failed -> blockingFailures += "SUPPLEMENT_PROVIDER:${supplement.errorCode}"
+            SupplementProductEvidenceResolution.NotFound ->
+                blockingFailures += SupplementInteractionFailureCode.SUPPLEMENT_NOT_FOUND
+            is SupplementProductEvidenceResolution.Failed -> blockingFailures += supplement.failureCode
         }
 
-        failedSteps += blockingFailures
-        val repositoryAvailability = repositoryAvailability()
-        if (!repositoryAvailability.mapping || !repositoryAvailability.canonical || !repositoryAvailability.source) {
-            blockingFailures += "SUPPLEMENT_EVIDENCE_REPOSITORY"
+        val physicalRepositoryAvailability = repositoryAvailability()
+        if (!catalogMetadata.available) {
+            blockingFailures += if (catalogMetadata.validationErrorCodes.any { it.contains("VALIDATION") || it.contains("CHECKSUM") }) {
+                SupplementInteractionFailureCode.RULE_CATALOG_INVALID
+            } else {
+                SupplementInteractionFailureCode.RULE_CATALOG_UNAVAILABLE
+            }
+        } else if (!catalogMetadata.verified) {
+            blockingFailures += SupplementInteractionFailureCode.RULE_CATALOG_INVALID
         }
-        if (!repositoryAvailability.rules) blockingFailures += "RULE_REPOSITORY"
+        if (!physicalRepositoryAvailability.mapping || !physicalRepositoryAvailability.canonical ||
+            !physicalRepositoryAvailability.source || !physicalRepositoryAvailability.rules
+        ) {
+            blockingFailures += SupplementInteractionFailureCode.RULE_CATALOG_UNAVAILABLE
+        }
+        val repositoryAvailability = if (catalogMetadata.available && catalogMetadata.verified) {
+            physicalRepositoryAvailability
+        } else {
+            RepositoryAvailability(source = false, canonical = false, mapping = false, rules = false)
+        }
 
         val mappings = if (supplementProduct != null && repositoryAvailability.mapping) {
             runCatching {
-                mappingRepository.findVerifiedByStatementNo(supplementProduct.statementNo, analyzedAt)
+                val returned = mappingRepository.findVerifiedByStatementNo(supplementProduct.statementNo, analyzedAt)
+                val eligible = returned.filter {
+                    it.statementNo == supplementProduct.statementNo && it.isProductionEligible(analyzedAt)
+                }
+                if (returned.size != eligible.size) {
+                    blockingFailures += SupplementInteractionFailureCode.SUPPLEMENT_INGREDIENT_UNVERIFIED
+                }
+                eligible
             }.getOrElse {
-                blockingFailures += "SUPPLEMENT_MAPPING_REPOSITORY"
+                blockingFailures += SupplementInteractionFailureCode.SUPPLEMENT_INGREDIENT_MAPPING_LOOKUP_FAILED
                 emptyList()
             }
         } else {
             emptyList()
         }
-        if (supplementProduct != null && mappings.isEmpty()) blockingFailures += "VERIFIED_SUPPLEMENT_MAPPING_NOT_FOUND"
+        if (supplementProduct != null && mappings.isEmpty()) {
+            blockingFailures += SupplementInteractionFailureCode.SUPPLEMENT_INGREDIENT_MAPPING_MISSING
+        }
 
         val supplementIngredients = resolveCanonicalIngredients(mappings, blockingFailures)
+        val mappingSources = resolveMappingSources(mappings, blockingFailures)
+        val canonicalSources = resolveCanonicalSources(supplementIngredients, blockingFailures)
         val expectedSupplementIngredients = mappings.map(SupplementProductIngredientMapping::supplementIngredientCanonicalId)
             .distinct()
             .size
         if (expectedSupplementIngredients > supplementIngredients.size) {
-            blockingFailures += "VERIFIED_SUPPLEMENT_INGREDIENT_NOT_FOUND"
+            blockingFailures += SupplementInteractionFailureCode.SUPPLEMENT_INGREDIENT_UNVERIFIED
         }
 
         val pairEvaluations = mutableListOf<SupplementInteractionPairEvaluation>()
         val matchedRules = mutableListOf<SupplementInteractionRule>()
+        var ruleDataInvalid = false
         medicationIngredients.forEach { drugIngredient ->
             supplementIngredients.forEach { supplementIngredient ->
                 val drugCode = drugIngredient.providerCode
                 if (drugCode.isNullOrBlank()) {
-                    pairEvaluations += failedPair(drugIngredient, supplementIngredient, "DRUG_INGREDIENT_CODE_MISSING")
-                    blockingFailures += "DRUG_INGREDIENT_CODE_MISSING"
+                    pairEvaluations += failedPair(
+                        drugIngredient,
+                        supplementIngredient,
+                        SupplementInteractionFailureCode.MEDICATION_INGREDIENT_CODE_MISSING,
+                    )
+                    blockingFailures += SupplementInteractionFailureCode.MEDICATION_INGREDIENT_CODE_MISSING
                 } else if (!repositoryAvailability.rules) {
-                    pairEvaluations += failedPair(drugIngredient, supplementIngredient, "RULE_REPOSITORY_UNAVAILABLE")
+                    pairEvaluations += failedPair(
+                        drugIngredient,
+                        supplementIngredient,
+                        SupplementInteractionFailureCode.RULE_CATALOG_UNAVAILABLE,
+                    )
                 } else {
                     val rules = runCatching {
                         ruleRepository.findVerified(drugCode, supplementIngredient.id, analyzedAt)
                     }.getOrElse {
-                        blockingFailures += "RULE_REPOSITORY"
-                        pairEvaluations += failedPair(drugIngredient, supplementIngredient, "RULE_REPOSITORY_FAILED")
+                        blockingFailures += SupplementInteractionFailureCode.RULE_LOOKUP_FAILED
+                        pairEvaluations += failedPair(
+                            drugIngredient,
+                            supplementIngredient,
+                            SupplementInteractionFailureCode.RULE_LOOKUP_FAILED,
+                        )
                         null
                     }
                     if (rules != null) {
-                        matchedRules += rules
+                        val eligibleRules = rules.filter {
+                            it.isProductionEligible(analyzedAt) &&
+                                it.drugIngredientCode == drugCode &&
+                                it.supplementIngredientCanonicalId == supplementIngredient.id
+                        }
+                        if (eligibleRules.size != rules.size) {
+                            blockingFailures += SupplementInteractionFailureCode.RULE_CATALOG_INVALID
+                            ruleDataInvalid = true
+                        }
+                        matchedRules += eligibleRules
                         pairEvaluations += SupplementInteractionPairEvaluation(
                             drugIngredientCode = drugCode,
                             drugIngredientName = drugIngredient.displayName,
                             supplementIngredientCanonicalId = supplementIngredient.id,
                             supplementIngredientName = supplementIngredient.displayName,
                             evaluated = true,
-                            matchedRuleIds = rules.map(SupplementInteractionRule::id),
+                            matchedRuleIds = eligibleRules.map(SupplementInteractionRule::id),
                         )
                     }
                 }
             }
         }
+        if (pairEvaluations.any { !it.evaluated }) {
+            blockingFailures += SupplementInteractionFailureCode.PAIR_EVALUATION_INCOMPLETE
+        }
 
-        val distinctRules = matchedRules.distinctBy(SupplementInteractionRule::id)
-        val sources = resolveSources(distinctRules, blockingFailures)
-        val evidence = buildEvidence(distinctRules, supplementIngredients, sources)
-        if (distinctRules.isNotEmpty() && evidence.isEmpty()) blockingFailures += "VERIFIED_RULE_SOURCE_NOT_FOUND"
+        val candidateRules = matchedRules.distinctBy(SupplementInteractionRule::id)
+        val ruleSources = resolveRuleSources(candidateRules, blockingFailures)
+        val verifiedRuleSourceIds = ruleSources.map(VerifiedSourceReference::id).toSet()
+        val distinctRules = candidateRules.filter { verifiedRuleSourceIds.containsAll(it.sourceReferenceIds) }
+        if (candidateRules.size != distinctRules.size) {
+            blockingFailures += SupplementInteractionFailureCode.RULE_SOURCE_UNVERIFIED
+        }
+        val eligibleRuleIds = distinctRules.map(SupplementInteractionRule::id).toSet()
+        val finalizedPairEvaluations = pairEvaluations.map { pair ->
+            pair.copy(matchedRuleIds = pair.matchedRuleIds.filter(eligibleRuleIds::contains))
+        }
+        val allSources = (mappingSources + canonicalSources + ruleSources).distinctBy(VerifiedSourceReference::id)
+        val evidence = buildEvidence(distinctRules, supplementIngredients, ruleSources)
+        if (distinctRules.isNotEmpty() && evidence.isEmpty()) {
+            blockingFailures += SupplementInteractionFailureCode.RULE_SOURCE_UNVERIFIED
+        }
 
         failedSteps += blockingFailures
         val coverage = coverage(
@@ -137,10 +208,17 @@ class SupplementInteractionAnalysisService(
             supplementResolved = supplementProduct != null,
             mappings = mappings,
             supplementIngredients = supplementIngredients,
-            pairs = pairEvaluations,
+            pairs = finalizedPairEvaluations,
             ruleRepositoryAvailable = repositoryAvailability.rules,
             evidenceRepositoriesAvailable = repositoryAvailability.source && repositoryAvailability.canonical &&
                 repositoryAvailability.mapping && repositoryAvailability.rules,
+            evidenceReferencesComplete =
+                mappingSources.map(VerifiedSourceReference::id).toSet() == mappings.map { it.sourceReferenceId }.toSet() &&
+                    canonicalSources.map(VerifiedSourceReference::id).toSet() ==
+                    supplementIngredients.map { it.sourceReferenceId }.toSet() &&
+                    !ruleDataInvalid &&
+                    candidateRules.size == distinctRules.size &&
+                    ruleSources.map(VerifiedSourceReference::id).toSet() == distinctRules.flatMap { it.sourceReferenceIds }.toSet(),
         )
         val severity = severity(distinctRules, coverage)
         val processingStatus = when {
@@ -154,10 +232,13 @@ class SupplementInteractionAnalysisService(
             officialMedicationIngredients = medicationIngredients,
             medicationOverview = medicationOverview,
             officialSupplementProduct = supplementProduct,
+            verifiedSupplementMappings = mappings,
             verifiedSupplementIngredients = supplementIngredients,
+            supplementMappingSourceReferences = mappingSources,
             matchedInteractionRules = distinctRules,
-            sourceReferences = sources,
+            sourceReferences = allSources,
             immutableDecision = severity,
+            catalogMetadata = catalogMetadata,
             coverage = coverage,
             failedSteps = failedSteps,
             analyzedAt = analyzedAt,
@@ -171,7 +252,7 @@ class SupplementInteractionAnalysisService(
             supplement = supplementProduct,
             drugIngredients = medicationIngredients,
             supplementIngredients = supplementIngredients,
-            evaluatedPairs = pairEvaluations,
+            evaluatedPairs = finalizedPairEvaluations,
             matchedRules = distinctRules,
             evidence = evidence,
             coverage = coverage,
@@ -179,9 +260,28 @@ class SupplementInteractionAnalysisService(
             message = message(severity, blockingFailures),
             disclaimer = disclaimer,
             analyzedAt = analyzedAt,
+            catalogMetadata = catalogMetadata,
             evidenceBundle = bundle,
         )
     }
+
+    private fun catalogMetadata(at: Instant): SupplementRuleCatalogAuditMetadata =
+        runCatching {
+            catalogMetadataProvider?.metadata()
+                ?: (sourceRepository as? SupplementRuleCatalogMetadataProvider)?.metadata()
+        }.getOrNull() ?: SupplementRuleCatalogAuditMetadata(
+            available = false,
+            verified = false,
+            catalogVersion = null,
+            schemaVersion = null,
+            catalogChecksum = null,
+            loadedAt = at,
+            sourceCount = 0,
+            canonicalIngredientCount = 0,
+            productMappingCount = 0,
+            interactionRuleCount = 0,
+            validationErrorCodes = listOf("CATALOG_METADATA_UNAVAILABLE"),
+        )
 
     private fun repositoryAvailability(): RepositoryAvailability = RepositoryAvailability(
         source = runCatching(sourceRepository::isAvailable).getOrDefault(false),
@@ -192,7 +292,7 @@ class SupplementInteractionAnalysisService(
 
     private fun resolveCanonicalIngredients(
         mappings: List<SupplementProductIngredientMapping>,
-        blockingFailures: MutableSet<String>,
+        blockingFailures: MutableSet<SupplementInteractionFailureCode>,
     ): List<SupplementIngredientCanonical> {
         val resolved = mutableListOf<SupplementIngredientCanonical>()
         mappings.map(SupplementProductIngredientMapping::supplementIngredientCanonicalId)
@@ -200,27 +300,65 @@ class SupplementInteractionAnalysisService(
             .forEach { canonicalId ->
                 val ingredient = runCatching { canonicalRepository.findVerifiedById(canonicalId) }
                     .getOrElse {
-                        blockingFailures += "CANONICAL_INGREDIENT_REPOSITORY"
+                        blockingFailures += SupplementInteractionFailureCode.SUPPLEMENT_INGREDIENT_UNVERIFIED
                         null
                     }
-                if (ingredient != null) resolved += ingredient
+                if (ingredient != null && ingredient.id == canonicalId && ingredient.isProductionEligible()) {
+                    resolved += ingredient
+                } else if (ingredient != null) {
+                    blockingFailures += SupplementInteractionFailureCode.SUPPLEMENT_INGREDIENT_UNVERIFIED
+                }
             }
         return resolved
     }
 
-    private fun resolveSources(
-        rules: List<SupplementInteractionRule>,
-        blockingFailures: MutableSet<String>,
+    private fun resolveMappingSources(
+        mappings: List<SupplementProductIngredientMapping>,
+        blockingFailures: MutableSet<SupplementInteractionFailureCode>,
     ): List<VerifiedSourceReference> {
-        val expectedIds = rules.flatMap { it.sourceReferenceIds }.toSet()
+        val expectedIds = mappings.map(SupplementProductIngredientMapping::sourceReferenceId).toSet()
         if (expectedIds.isEmpty()) return emptyList()
-        val sources = runCatching { sourceRepository.findVerifiedByIds(expectedIds) }
+        val sources = runCatching { sourceRepository.findVerifiedByIds(expectedIds).filter(VerifiedSourceReference::isProductionEligible) }
             .getOrElse {
-                blockingFailures += "SOURCE_REPOSITORY"
+                blockingFailures += SupplementInteractionFailureCode.SUPPLEMENT_INGREDIENT_UNVERIFIED
                 emptyList()
             }
         if (sources.map(VerifiedSourceReference::id).toSet() != expectedIds) {
-            blockingFailures += "VERIFIED_RULE_SOURCE_NOT_FOUND"
+            blockingFailures += SupplementInteractionFailureCode.SUPPLEMENT_INGREDIENT_UNVERIFIED
+        }
+        return sources
+    }
+
+    private fun resolveCanonicalSources(
+        ingredients: List<SupplementIngredientCanonical>,
+        blockingFailures: MutableSet<SupplementInteractionFailureCode>,
+    ): List<VerifiedSourceReference> {
+        val expectedIds = ingredients.map(SupplementIngredientCanonical::sourceReferenceId).toSet()
+        if (expectedIds.isEmpty()) return emptyList()
+        val sources = runCatching { sourceRepository.findVerifiedByIds(expectedIds).filter(VerifiedSourceReference::isProductionEligible) }
+            .getOrElse {
+                blockingFailures += SupplementInteractionFailureCode.SUPPLEMENT_INGREDIENT_UNVERIFIED
+                emptyList()
+            }
+        if (sources.map(VerifiedSourceReference::id).toSet() != expectedIds) {
+            blockingFailures += SupplementInteractionFailureCode.SUPPLEMENT_INGREDIENT_UNVERIFIED
+        }
+        return sources
+    }
+
+    private fun resolveRuleSources(
+        rules: List<SupplementInteractionRule>,
+        blockingFailures: MutableSet<SupplementInteractionFailureCode>,
+    ): List<VerifiedSourceReference> {
+        val expectedIds = rules.flatMap { it.sourceReferenceIds }.toSet()
+        if (expectedIds.isEmpty()) return emptyList()
+        val sources = runCatching { sourceRepository.findVerifiedByIds(expectedIds).filter(VerifiedSourceReference::isProductionEligible) }
+            .getOrElse {
+                blockingFailures += SupplementInteractionFailureCode.RULE_SOURCE_UNVERIFIED
+                emptyList()
+            }
+        if (sources.map(VerifiedSourceReference::id).toSet() != expectedIds) {
+            blockingFailures += SupplementInteractionFailureCode.RULE_SOURCE_UNVERIFIED
         }
         return sources
     }
@@ -237,10 +375,12 @@ class SupplementInteractionAnalysisService(
             rule.sourceReferenceIds.mapNotNull { sourceId ->
                 val source = sourceById[sourceId] ?: return@mapNotNull null
                 SupplementInteractionEvidence(
+                    ruleId = rule.id,
                     evidenceType = "SUPPLEMENT_INTERACTION_RULE",
                     sourceAuthority = source.authority,
                     sourceReferenceId = source.id,
                     title = source.title,
+                    sourceTitle = source.title,
                     originalText = source.originalText,
                     drugIngredientCode = rule.drugIngredientCode,
                     drugIngredientName = rule.drugIngredientName,
@@ -248,6 +388,8 @@ class SupplementInteractionAnalysisService(
                     supplementIngredientName = ingredient.displayName,
                     severity = rule.severity,
                     verificationStatus = rule.verificationStatus,
+                    ruleVersion = rule.ruleVersion,
+                    sourceVersion = source.sourceVersion,
                     validFrom = rule.validFrom,
                     validTo = rule.validTo,
                     retrievedAt = source.retrievedAt,
@@ -266,6 +408,7 @@ class SupplementInteractionAnalysisService(
         pairs: List<SupplementInteractionPairEvaluation>,
         ruleRepositoryAvailable: Boolean,
         evidenceRepositoriesAvailable: Boolean,
+        evidenceReferencesComplete: Boolean,
     ): SupplementInteractionCoverage {
         val mappingIds = mappings.map(SupplementProductIngredientMapping::supplementIngredientCanonicalId).distinct()
         val expectedSupplementIngredients = mappingIds.size
@@ -279,14 +422,15 @@ class SupplementInteractionAnalysisService(
         val complete = medicationResolved && medicationIngredientsComplete &&
             medicationIngredients.isNotEmpty() && medicationIngredients.all { !it.providerCode.isNullOrBlank() } &&
             supplementResolved && mappings.isNotEmpty() && allSupplementIngredientsVerified &&
-            totalPairs > 0 && evaluatedPairs == totalPairs && failedPairs == 0 && evidenceRepositoriesAvailable
+            totalPairs > 0 && evaluatedPairs == totalPairs && failedPairs == 0 &&
+            ruleRepositoryAvailable && evidenceRepositoriesAvailable && evidenceReferencesComplete
         val checkpoints = listOf(
             medicationResolved,
             medicationIngredientsComplete,
             supplementResolved,
             mappings.isNotEmpty(),
             allSupplementIngredientsVerified,
-            evidenceRepositoriesAvailable,
+            evidenceRepositoriesAvailable && evidenceReferencesComplete,
         )
         val denominator = checkpoints.size + totalPairs
         val numerator = checkpoints.count { it } + evaluatedPairs.coerceAtMost(totalPairs)
@@ -325,13 +469,14 @@ class SupplementInteractionAnalysisService(
 
     private fun message(
         severity: SupplementInteractionSeverity,
-        blockingFailures: Set<String>,
+        blockingFailures: Set<SupplementInteractionFailureCode>,
     ): String = when (severity) {
         SupplementInteractionSeverity.AVOID_COMBINATION -> "검수된 병용 회피 근거가 확인되었습니다."
         SupplementInteractionSeverity.CAUTION -> "검수된 병용섭취 주의 근거가 확인되었습니다."
         SupplementInteractionSeverity.NO_VERIFIED_RULE_FOUND -> NO_VERIFIED_RULE_MESSAGE
         SupplementInteractionSeverity.UNKNOWN -> {
-            val steps = blockingFailures.joinToString(", ").ifBlank { "COVERAGE_INCOMPLETE" }
+            val steps = blockingFailures.joinToString(", ") { it.name }
+                .ifBlank { SupplementInteractionFailureCode.PAIR_EVALUATION_INCOMPLETE.name }
             "분석 근거를 완전히 확인하지 못했습니다($steps). 안전하다는 의미가 아닙니다."
         }
     }
@@ -339,7 +484,7 @@ class SupplementInteractionAnalysisService(
     private fun failedPair(
         drugIngredient: Ingredient,
         supplementIngredient: SupplementIngredientCanonical,
-        errorCode: String,
+        errorCode: SupplementInteractionFailureCode,
     ) = SupplementInteractionPairEvaluation(
         drugIngredientCode = drugIngredient.providerCode.orEmpty(),
         drugIngredientName = drugIngredient.displayName,
@@ -347,7 +492,7 @@ class SupplementInteractionAnalysisService(
         supplementIngredientName = supplementIngredient.displayName,
         evaluated = false,
         matchedRuleIds = emptyList(),
-        errorCode = errorCode,
+        errorCode = errorCode.name,
     )
 
     private data class RepositoryAvailability(

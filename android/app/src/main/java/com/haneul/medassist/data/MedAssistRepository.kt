@@ -26,6 +26,7 @@ class MedAssistRepository @Inject constructor(
     private val database: MedAssistDatabase,
     private val client: OkHttpClient,
     private val json: Json,
+    private val supplementInteractionRemoteDataSource: SupplementInteractionRemoteDataSource,
 ) {
     suspend fun home(): LoadState<HomeResponse> = try {
         val remote = api.home()
@@ -55,6 +56,15 @@ class MedAssistRepository @Inject constructor(
                 if (taken) Instant.now().toString() else null, medication.version),
         )
     }
+
+    suspend fun searchSupplementProducts(query: String): Result<SupplementProductSearchResponse> =
+        supplementInteractionRemoteDataSource.searchSupplements(query)
+
+    suspend fun checkSupplementInteraction(
+        medicationProductCode: String,
+        supplementStatementNo: String,
+    ): Result<SupplementInteractionCheckResponse> =
+        supplementInteractionRemoteDataSource.check(medicationProductCode, supplementStatementNo)
 
     suspend fun createDraft(front: Uri, back: Uri, resolver: ContentResolver, ocrText: String): PrescriptionDraft =
         runCatching {
@@ -192,4 +202,3 @@ class MedAssistRepository @Inject constructor(
         return "결론: 현재 질문만으로 약물 안전성을 확인할 수 없습니다.\n확인된 근거: 공식 상호작용 근거가 연결되지 않았습니다.\n할 일: 제품명과 성분을 확인한 뒤 의사·약사에게 상담하세요."
     }
 }
-

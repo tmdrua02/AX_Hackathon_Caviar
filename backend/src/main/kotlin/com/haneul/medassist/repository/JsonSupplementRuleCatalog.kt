@@ -2,6 +2,7 @@ package com.haneul.medassist.repository
 
 import com.haneul.medassist.config.SupplementInteractionRuleProperties
 import com.haneul.medassist.domain.evidence.EvidenceVerificationStatus
+import com.haneul.medassist.domain.evidence.SupplementRuleCatalogAuditMetadata
 import com.haneul.medassist.domain.evidence.VerifiedSourceReference
 import com.haneul.medassist.domain.supplement.MappingType
 import com.haneul.medassist.domain.supplement.SupplementIngredientCanonical
@@ -10,6 +11,7 @@ import com.haneul.medassist.domain.supplement.SupplementProductIngredientMapping
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.core.io.ResourceLoader
+import org.slf4j.LoggerFactory
 import tools.jackson.databind.ObjectMapper
 import java.time.Instant
 
@@ -18,14 +20,17 @@ data class SupplementRuleCatalogDocument(
     val ingredients: List<SupplementIngredientCanonical> = emptyList(),
     val mappings: List<SupplementProductIngredientMapping> = emptyList(),
     val rules: List<SupplementInteractionRule> = emptyList(),
+    val manifest: SupplementRuleCatalogManifest? = null,
 )
 
 class JsonSupplementRuleCatalog(
     document: SupplementRuleCatalogDocument,
+    private val auditMetadata: SupplementRuleCatalogAuditMetadata = document.defaultAuditMetadata(),
 ) : VerifiedSourceReferenceRepository,
     SupplementIngredientCanonicalRepository,
     SupplementProductIngredientMappingRepository,
-    SupplementInteractionRuleRepository {
+    SupplementInteractionRuleRepository,
+    SupplementRuleCatalogMetadataProvider {
     private val sources = document.sources.associateUniqueBy("source", VerifiedSourceReference::id)
     private val ingredients = document.ingredients.associateUniqueBy("canonical ingredient", SupplementIngredientCanonical::id)
     private val mappings = document.mappings.associateUniqueBy("product ingredient mapping", SupplementProductIngredientMapping::id)
@@ -63,7 +68,9 @@ class JsonSupplementRuleCatalog(
         }
         .sortedBy(SupplementInteractionRule::id)
 
-    override fun isAvailable(): Boolean = true
+    override fun isAvailable(): Boolean = auditMetadata.available
+
+    override fun metadata(): SupplementRuleCatalogAuditMetadata = auditMetadata
 
     private fun validateReferences() {
         ingredients.values.forEach { ingredient ->
@@ -144,6 +151,11 @@ class JsonSupplementRuleCatalog(
         }
         return result
     }
+
+    companion object {
+        fun unavailable(metadata: SupplementRuleCatalogAuditMetadata): JsonSupplementRuleCatalog =
+            JsonSupplementRuleCatalog(SupplementRuleCatalogDocument(), metadata)
+    }
 }
 
 @Configuration
@@ -155,10 +167,83 @@ class SupplementInteractionRuleCatalogConfiguration {
         objectMapper: ObjectMapper,
     ): JsonSupplementRuleCatalog {
         val resource = resourceLoader.getResource(properties.resource)
-        require(resource.exists()) { "supplement interaction rule catalog does not exist" }
-        val document = resource.inputStream.use {
-            objectMapper.readValue(it, SupplementRuleCatalogDocument::class.java)
+        if (!resource.exists()) {
+            logger.error("Supplement rule catalog unavailable code=CATALOG_NOT_FOUND resource={}", properties.resource)
+            return JsonSupplementRuleCatalog.unavailable(unavailableMetadata("CATALOG_NOT_FOUND"))
         }
-        return JsonSupplementRuleCatalog(document)
+        val result = runCatching {
+            val bytes = resource.inputStream.use { it.readAllBytes() }
+            SupplementRuleCatalogValidator(objectMapper).validate(bytes, properties.requireVerifiedManifest)
+        }.getOrElse {
+            logger.error("Supplement rule catalog unavailable code=CATALOG_READ_FAILED resource={}", properties.resource)
+            return JsonSupplementRuleCatalog.unavailable(unavailableMetadata("CATALOG_READ_FAILED"))
+        }
+        val errorCodes = result.report.errors.map(CatalogValidationIssue::code).distinct()
+        val document = result.document
+        if (!result.report.valid || document == null) {
+            logger.error(
+                "Supplement rule catalog unavailable code=CATALOG_VALIDATION_FAILED resource={} validationCodes={}",
+                properties.resource,
+                errorCodes.joinToString(","),
+            )
+            return JsonSupplementRuleCatalog.unavailable(
+                unavailableMetadata(
+                    errorCode = "CATALOG_VALIDATION_FAILED",
+                    report = result.report,
+                ),
+            )
+        }
+        val manifest = document.manifest
+        return JsonSupplementRuleCatalog(
+            document = document,
+            auditMetadata = SupplementRuleCatalogAuditMetadata(
+                available = true,
+                verified = manifest?.status == SupplementRuleCatalogStatus.VERIFIED,
+                catalogVersion = manifest?.catalogVersion,
+                schemaVersion = manifest?.schemaVersion,
+                catalogChecksum = result.report.checksum,
+                loadedAt = Instant.now(),
+                sourceCount = document.sources.size,
+                canonicalIngredientCount = document.ingredients.size,
+                productMappingCount = document.mappings.size,
+                interactionRuleCount = document.rules.size,
+                validationErrorCodes = emptyList(),
+            ),
+        )
+    }
+
+    private fun unavailableMetadata(
+        errorCode: String,
+        report: CatalogValidationReport? = null,
+    ) = SupplementRuleCatalogAuditMetadata(
+        available = false,
+        verified = false,
+        catalogVersion = report?.catalogVersion,
+        schemaVersion = report?.schemaVersion,
+        catalogChecksum = report?.checksum,
+        loadedAt = Instant.now(),
+        sourceCount = report?.sourceCount ?: 0,
+        canonicalIngredientCount = report?.canonicalIngredientCount ?: 0,
+        productMappingCount = report?.productMappingCount ?: 0,
+        interactionRuleCount = report?.interactionRuleCount ?: 0,
+        validationErrorCodes = listOf(errorCode) + report?.errors.orEmpty().map(CatalogValidationIssue::code),
+    )
+
+    companion object {
+        private val logger = LoggerFactory.getLogger(SupplementInteractionRuleCatalogConfiguration::class.java)
     }
 }
+
+private fun SupplementRuleCatalogDocument.defaultAuditMetadata() = SupplementRuleCatalogAuditMetadata(
+    available = true,
+    verified = manifest?.status == SupplementRuleCatalogStatus.VERIFIED || manifest == null,
+    catalogVersion = manifest?.catalogVersion,
+    schemaVersion = manifest?.schemaVersion,
+    catalogChecksum = null,
+    loadedAt = Instant.now(),
+    sourceCount = sources.size,
+    canonicalIngredientCount = ingredients.size,
+    productMappingCount = mappings.size,
+    interactionRuleCount = rules.size,
+    validationErrorCodes = emptyList(),
+)

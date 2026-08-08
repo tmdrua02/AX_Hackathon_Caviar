@@ -40,6 +40,7 @@ object Routes {
     const val REVIEW = "interaction/review"
     const val ANALYZING = "interaction/analyzing"
     const val RESULT = "interaction/result"
+    const val SUPPLEMENT_RESULT = "interaction/supplement-result"
     const val RECORDING = "recording/home"
     const val ACTIVE_RECORDING = "recording/active"
     const val RECORDING_FILES = "recording/files"
@@ -83,11 +84,21 @@ fun MedAssistNavigation(state: AppUiState, viewModel: AppViewModel) {
         NavHost(navController = nav, startDestination = Routes.HOME, modifier = Modifier.windowInsetsPadding(WindowInsets.navigationBars)) {
             composable(Routes.HOME) { HomeScreen(state, viewModel, padding) }
             composable(Routes.ALARM) { AlarmScreen(state, padding) }
-            composable(Routes.INTERACTION) { InteractionListScreen(state, viewModel, padding, { nav.navigate(Routes.CAPTURE) }) { viewModel.startAnalysis { nav.navigate(Routes.ANALYZING) } } }
+            composable(Routes.INTERACTION) {
+                InteractionListScreen(
+                    state = state,
+                    viewModel = viewModel,
+                    padding = padding,
+                    onAdd = { nav.navigate(Routes.CAPTURE) },
+                    onStart = { viewModel.startAnalysis { nav.navigate(Routes.ANALYZING) } },
+                    onSupplementResult = { nav.navigate(Routes.SUPPLEMENT_RESULT) },
+                )
+            }
             composable(Routes.CAPTURE) { CaptureScreen(state, viewModel, nav) }
             composable(Routes.REVIEW) { ReviewScreen(state, viewModel, nav) }
             composable(Routes.ANALYZING) { AnalyzingScreen(state, viewModel, nav) }
             composable(Routes.RESULT) { ResultScreen(state, viewModel, nav) }
+            composable(Routes.SUPPLEMENT_RESULT) { SupplementInteractionResultScreen(state, viewModel, nav) }
             composable(Routes.RECORDING) { RecordingHomeScreen(state, viewModel, padding, nav) }
             composable(Routes.ACTIVE_RECORDING) { ActiveRecordingScreen(state, viewModel, nav) }
             composable(Routes.RECORDING_FILES) { RecordingFilesScreen(state, viewModel, nav) }

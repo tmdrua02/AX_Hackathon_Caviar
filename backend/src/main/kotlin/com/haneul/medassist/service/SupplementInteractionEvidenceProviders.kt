@@ -9,6 +9,7 @@ import com.haneul.medassist.domain.medication.Medication
 import com.haneul.medassist.domain.medication.ProductResolutionStatus
 import com.haneul.medassist.domain.medication.VerifiedDrugProduct
 import com.haneul.medassist.domain.supplement.HealthFunctionalFoodLookupStatus
+import com.haneul.medassist.domain.supplement.SupplementInteractionFailureCode
 import com.haneul.medassist.domain.supplement.SupplementProductSnapshot
 import com.haneul.medassist.exception.MedAssistException
 import org.springframework.stereotype.Component
@@ -20,12 +21,15 @@ sealed interface MedicationEvidenceResolution {
         val ingredients: List<Ingredient>,
         val ingredientsComplete: Boolean,
         val overview: DrugOverview?,
-        val optionalFailedSteps: Set<String> = emptySet(),
+        val optionalFailedSteps: Set<SupplementInteractionFailureCode> = emptySet(),
     ) : MedicationEvidenceResolution
 
     data object NotFound : MedicationEvidenceResolution
 
-    data class Failed(val errorCode: String) : MedicationEvidenceResolution
+    data class Failed(
+        val failureCode: SupplementInteractionFailureCode,
+        val providerErrorCode: String? = null,
+    ) : MedicationEvidenceResolution
 }
 
 fun interface MedicationEvidenceProvider {
@@ -37,7 +41,10 @@ sealed interface SupplementProductEvidenceResolution {
 
     data object NotFound : SupplementProductEvidenceResolution
 
-    data class Failed(val errorCode: String) : SupplementProductEvidenceResolution
+    data class Failed(
+        val failureCode: SupplementInteractionFailureCode,
+        val providerErrorCode: String? = null,
+    ) : SupplementProductEvidenceResolution
 }
 
 fun interface SupplementProductEvidenceProvider {
@@ -52,8 +59,14 @@ class PublicDataMedicationEvidenceProvider(
     override fun resolve(productCode: String): MedicationEvidenceResolution = try {
         val product = drugProductApiClient.findProduct(productCode) ?: return MedicationEvidenceResolution.NotFound
         when (val ingredientResult = drugProductApiClient.findIngredients(product.productCode, product.productName)) {
-            is IngredientSearchResult.ProviderError -> MedicationEvidenceResolution.Failed(ingredientResult.safeErrorCode)
-            IngredientSearchResult.SchemaUnverified -> MedicationEvidenceResolution.Failed("INGREDIENT_SCHEMA_UNVERIFIED")
+            is IngredientSearchResult.ProviderError -> MedicationEvidenceResolution.Failed(
+                SupplementInteractionFailureCode.MEDICATION_INGREDIENT_LOOKUP_FAILED,
+                ingredientResult.safeErrorCode,
+            )
+            IngredientSearchResult.SchemaUnverified -> MedicationEvidenceResolution.Failed(
+                SupplementInteractionFailureCode.MEDICATION_INGREDIENT_LOOKUP_FAILED,
+                "INGREDIENT_SCHEMA_UNVERIFIED",
+            )
             is IngredientSearchResult.Success -> {
                 val overviewResult = runCatching {
                     drugOverviewService.findOverview(
@@ -73,7 +86,7 @@ class PublicDataMedicationEvidenceProvider(
                     overviewResult == null || overviewResult.status == DrugOverviewLookupStatus.FAILED ||
                     overviewResult.status == DrugOverviewLookupStatus.PARTIAL
                 ) {
-                    setOf("MEDICATION_OVERVIEW")
+                    setOf(SupplementInteractionFailureCode.MEDICATION_OVERVIEW_LOOKUP_FAILED)
                 } else {
                     emptySet()
                 }
@@ -87,7 +100,10 @@ class PublicDataMedicationEvidenceProvider(
             }
         }
     } catch (exception: MedAssistException) {
-        MedicationEvidenceResolution.Failed(exception.errorCode.name)
+        MedicationEvidenceResolution.Failed(
+            SupplementInteractionFailureCode.MEDICATION_PRODUCT_LOOKUP_FAILED,
+            exception.errorCode.name,
+        )
     }
 }
 
@@ -96,16 +112,29 @@ class PublicDataSupplementProductEvidenceProvider(
     private val service: HealthFunctionalFoodService,
 ) : SupplementProductEvidenceProvider {
     override fun resolve(statementNo: String): SupplementProductEvidenceResolution {
-        val result = service.findByStatementNo(statementNo)
+        val result = try {
+            service.findByStatementNo(statementNo)
+        } catch (exception: MedAssistException) {
+            return SupplementProductEvidenceResolution.Failed(
+                SupplementInteractionFailureCode.SUPPLEMENT_PRODUCT_LOOKUP_FAILED,
+                exception.errorCode.name,
+            )
+        }
         return when (result.status) {
             HealthFunctionalFoodLookupStatus.RESOLVED -> result.snapshot
                 ?.let(SupplementProductEvidenceResolution::Resolved)
-                ?: SupplementProductEvidenceResolution.Failed("SUPPLEMENT_INVALID_RESPONSE")
+                ?: SupplementProductEvidenceResolution.Failed(
+                    SupplementInteractionFailureCode.SUPPLEMENT_PRODUCT_LOOKUP_FAILED,
+                    "SUPPLEMENT_INVALID_RESPONSE",
+                )
 
             HealthFunctionalFoodLookupStatus.NOT_FOUND -> SupplementProductEvidenceResolution.NotFound
             HealthFunctionalFoodLookupStatus.FAILED,
             HealthFunctionalFoodLookupStatus.PARTIAL,
-            -> SupplementProductEvidenceResolution.Failed(result.errorCode ?: "SUPPLEMENT_PROVIDER_FAILED")
+            -> SupplementProductEvidenceResolution.Failed(
+                SupplementInteractionFailureCode.SUPPLEMENT_PRODUCT_LOOKUP_FAILED,
+                result.errorCode ?: "SUPPLEMENT_PROVIDER_FAILED",
+            )
         }
     }
 }

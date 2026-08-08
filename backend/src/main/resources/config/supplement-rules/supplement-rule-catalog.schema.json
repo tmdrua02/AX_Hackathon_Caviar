@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://medassist.local/schema/supplement-rule-catalog-1.0.json",
+  "title": "MedAssist Supplement Rule Catalog",
+  "type": "object",
+  "required": ["sources", "ingredients", "mappings", "rules"],
+  "properties": {
+    "manifest": { "$ref": "#/$defs/manifest" },
+    "sources": { "type": "array", "items": { "$ref": "#/$defs/source" } },
+    "ingredients": { "type": "array", "items": { "$ref": "#/$defs/ingredient" } },
+    "mappings": { "type": "array", "items": { "$ref": "#/$defs/mapping" } },
+    "rules": { "type": "array", "items": { "$ref": "#/$defs/rule" } }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "verificationStatus": {
+      "enum": ["DRAFT", "PENDING_REVIEW", "VERIFIED", "REJECTED", "RETIRED"]
+    },
+    "instant": { "type": "string", "format": "date-time" },
+    "nonBlank": { "type": "string", "minLength": 1, "pattern": ".*\\S.*" },
+    "sha256": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" },
+    "recordCounts": {
+      "type": "object",
+      "required": ["sources", "canonicalIngredients", "productMappings", "interactionRules"],
+      "properties": {
+        "sources": { "type": "integer", "minimum": 0 },
+        "canonicalIngredients": { "type": "integer", "minimum": 0 },
+        "productMappings": { "type": "integer", "minimum": 0 },
+        "interactionRules": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "manifest": {
+      "type": "object",
+      "required": ["catalogVersion", "schemaVersion", "generatedAt", "generatedBy", "recordCounts", "status", "contentChecksum"],
+      "properties": {
+        "catalogVersion": { "$ref": "#/$defs/nonBlank" },
+        "schemaVersion": { "const": "1.0" },
+        "generatedAt": { "$ref": "#/$defs/instant" },
+        "generatedBy": { "$ref": "#/$defs/nonBlank" },
+        "reviewer": { "type": ["string", "null"] },
+        "reviewedAt": { "oneOf": [{ "$ref": "#/$defs/instant" }, { "type": "null" }] },
+        "sourceFileChecksums": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/sha256" }
+        },
+        "recordCounts": { "$ref": "#/$defs/recordCounts" },
+        "status": { "enum": ["DRAFT", "VALIDATION_FAILED", "READY_FOR_REVIEW", "VERIFIED", "REJECTED", "RETIRED"] },
+        "contentChecksum": { "$ref": "#/$defs/sha256" }
+      },
+      "additionalProperties": false
+    },
+    "source": {
+      "type": "object",
+      "required": ["id", "authority", "title", "originalText", "retrievedAt", "verificationStatus"],
+      "anyOf": [{ "required": ["sourceUrl"] }, { "required": ["documentIdentifier"] }],
+      "properties": {
+        "id": { "$ref": "#/$defs/nonBlank" },
+        "authority": { "enum": ["MFDS", "FOOD_SAFETY_KOREA", "DRUG_LABEL", "PEER_REVIEWED_RESEARCH", "OTHER_OFFICIAL"] },
+        "title": { "$ref": "#/$defs/nonBlank" },
+        "sourceUrl": { "type": ["string", "null"] },
+        "documentIdentifier": { "type": ["string", "null"] },
+        "originalText": { "$ref": "#/$defs/nonBlank" },
+        "publishedAt": { "oneOf": [{ "$ref": "#/$defs/instant" }, { "type": "null" }] },
+        "retrievedAt": { "$ref": "#/$defs/instant" },
+        "verificationStatus": { "$ref": "#/$defs/verificationStatus" },
+        "reviewedBy": { "type": ["string", "null"] },
+        "reviewedAt": { "oneOf": [{ "$ref": "#/$defs/instant" }, { "type": "null" }] },
+        "notes": { "type": ["string", "null"] },
+        "sourceVersion": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "ingredient": {
+      "type": "object",
+      "required": ["id", "canonicalName", "displayName", "active", "sourceReferenceId", "verificationStatus", "createdAt", "updatedAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/nonBlank" },
+        "canonicalName": { "$ref": "#/$defs/nonBlank" },
+        "displayName": { "$ref": "#/$defs/nonBlank" },
+        "aliases": { "type": "array", "items": { "$ref": "#/$defs/nonBlank" }, "uniqueItems": true },
+        "providerCode": { "type": ["string", "null"] },
+        "category": { "type": ["string", "null"] },
+        "active": { "type": "boolean" },
+        "sourceReferenceId": { "$ref": "#/$defs/nonBlank" },
+        "verificationStatus": { "$ref": "#/$defs/verificationStatus" },
+        "createdAt": { "$ref": "#/$defs/instant" },
+        "updatedAt": { "$ref": "#/$defs/instant" }
+      },
+      "additionalProperties": false
+    },
+    "mapping": {
+      "type": "object",
+      "required": ["id", "statementNo", "productName", "supplementIngredientCanonicalId", "ingredientDisplayName", "mappingType", "sourceField", "sourceReferenceId", "verificationStatus", "createdAt", "updatedAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/nonBlank" },
+        "statementNo": { "$ref": "#/$defs/nonBlank" },
+        "productName": { "$ref": "#/$defs/nonBlank" },
+        "supplementIngredientCanonicalId": { "$ref": "#/$defs/nonBlank" },
+        "ingredientDisplayName": { "$ref": "#/$defs/nonBlank" },
+        "mappingType": { "enum": ["OFFICIAL_STRUCTURED", "OFFICIAL_TEXT_VERIFIED", "PRODUCT_LABEL_VERIFIED", "MANUAL_VERIFIED", "UNVERIFIED_CANDIDATE"] },
+        "sourceField": { "$ref": "#/$defs/nonBlank" },
+        "sourceReferenceId": { "$ref": "#/$defs/nonBlank" },
+        "verificationStatus": { "$ref": "#/$defs/verificationStatus" },
+        "validFrom": { "oneOf": [{ "$ref": "#/$defs/instant" }, { "type": "null" }] },
+        "validTo": { "oneOf": [{ "$ref": "#/$defs/instant" }, { "type": "null" }] },
+        "createdAt": { "$ref": "#/$defs/instant" },
+        "updatedAt": { "$ref": "#/$defs/instant" }
+      },
+      "additionalProperties": false
+    },
+    "rule": {
+      "type": "object",
+      "required": ["id", "drugIngredientCode", "drugIngredientName", "supplementIngredientCanonicalId", "severity", "interactionType", "userMessage", "recommendation", "sourceReferenceIds", "verificationStatus", "createdAt", "updatedAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/nonBlank" },
+        "drugIngredientCode": { "$ref": "#/$defs/nonBlank" },
+        "drugIngredientName": { "$ref": "#/$defs/nonBlank" },
+        "supplementIngredientCanonicalId": { "$ref": "#/$defs/nonBlank" },
+        "severity": { "enum": ["AVOID_COMBINATION", "CAUTION"] },
+        "interactionType": { "enum": ["BLEEDING_RISK", "ABSORPTION_CHANGE", "METABOLISM_CHANGE", "EFFECT_INCREASE", "EFFECT_DECREASE", "DUPLICATE_EFFECT", "BLOOD_PRESSURE_EFFECT", "BLOOD_GLUCOSE_EFFECT", "CENTRAL_NERVOUS_SYSTEM_EFFECT", "ELECTROLYTE_EFFECT", "LIVER_EFFECT", "KIDNEY_EFFECT", "OTHER"] },
+        "mechanismSummary": { "type": ["string", "null"] },
+        "userMessage": { "$ref": "#/$defs/nonBlank" },
+        "recommendation": { "$ref": "#/$defs/nonBlank" },
+        "sourceReferenceIds": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/nonBlank" } },
+        "verificationStatus": { "$ref": "#/$defs/verificationStatus" },
+        "validFrom": { "oneOf": [{ "$ref": "#/$defs/instant" }, { "type": "null" }] },
+        "validTo": { "oneOf": [{ "$ref": "#/$defs/instant" }, { "type": "null" }] },
+        "createdAt": { "$ref": "#/$defs/instant" },
+        "updatedAt": { "$ref": "#/$defs/instant" },
+        "ruleVersion": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    }
+  }
+}

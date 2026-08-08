@@ -17,12 +17,13 @@ flowchart LR
     H -. "정상 NOT_FOUND만" .-> S["SupplementSearchIndex fallback"]
     S --> C
     B --> I["성분 비교 서비스"]
-    I -. "최종 판정 연결 보류" .-> D["DUR 병용금기 조회 Client · 구현 완료"]
-    L["선택적 LLM · 현재 비활성"] -. "검색어 힌트만" .-> N
-    L -. "제품·성분·판정 생성 금지" .-> B
+    I --> D["DUR 병용금기 양방향 조회"]
+    B --> L["OpenAI presentation adapter"]
+    L --> B
+    L -. "제품·성분·근거·판정 변경 금지" .-> B
 ```
 
-LLM 경계는 현재 구현하지 않았습니다. 추후에도 `EvidencePresentationRequest`처럼 backend가 확정한 근거만 입력받는 설명 생성기로 제한하며, 제품·성분·DUR·supplement rule 또는 최종 판정을 생성하거나 변경할 수 없습니다.
+LLM은 `SupplementInteractionAnalysisService` 뒤의 presentation layer입니다. `SupplementInteractionPresentationService`가 deterministic analysis를 먼저 완료하고 `toExplanationRequest()` 결과만 OpenAI adapter에 전달합니다. LLM은 제품·성분·DUR·supplement rule, severity, coverage 또는 실패 단계를 생성하거나 변경할 수 없습니다.
 
 ## 제품 검색 흐름
 
@@ -133,14 +134,28 @@ flowchart LR
     VM --> CP
     CP --> VR["VERIFIED supplement rule repository"]
     VR --> EV["Evidence + immutable decision + coverage"]
-    EV -. "설명 DTO만" .-> LLM["LLM presentation layer · 미구현"]
+    EV --> REQ["immutable Explanation Request"]
+    REQ --> LLM["OpenAI structured explanation"]
+    LLM --> FR["analysis + non-authoritative explanation"]
 ```
 
 `SupplementInteractionAnalysisService`는 공식 약 제품과 전체 성분, 공식 건강기능식품 snapshot, 현재 유효한 VERIFIED 매핑을 확인한 뒤 전체 Cartesian pair를 평가합니다. `AVOID_COMBINATION`이 `CAUTION`보다 우선하며, 위험 규칙이 확인된 경우 다른 pair 실패가 있어도 확인된 위험은 유지하되 coverage와 processing status는 불완전하게 표시합니다.
 
 모든 입력과 pair가 완전하고 rule repository가 정상인데 일치 규칙만 없을 때 `NO_VERIFIED_RULE_FOUND`입니다. 제품 미확인, 공식 성분코드 누락, 검수 매핑 부재, repository 실패 또는 pair 실패는 `UNKNOWN`입니다. DUR adapter는 계속 약–약 전용이며 supplement product/canonical ID를 전달하지 않습니다.
 
-현재 repository 구현은 교체 가능한 네 interface와 JSON startup loader입니다. production `supplement-interaction-rules.json`은 빈 배열만 포함합니다. 검수 데이터는 source → canonical ingredient → product mapping/rule 참조 무결성, VERIFIED source, 유효기간, 중복 활성 규칙을 통과해야 시작됩니다. 향후 동일 interface 뒤에 관리형 DB를 연결할 수 있습니다.
+LLM 호출 실패는 위 severity에 영향을 주지 않습니다. `GENERATED`, `FALLBACK`, `UNAVAILABLE` explanation 상태를 별도로 반환하며 UNKNOWN/NO_VERIFIED_RULE_FOUND에서 확정적 안전 표현이 감지되면 전체 LLM 설명을 버리고 deterministic fallback을 사용합니다. OpenAI client는 공공데이터 executor와 분리된 timeout, retry, bulkhead와 circuit 상태를 가집니다.
+
+현재 repository 구현은 교체 가능한 네 interface와 JSON startup loader입니다. production `supplement-interaction-rules.json`은 빈 배열만 포함하며 실제 의료 규칙 seed는 없습니다. 검수 데이터는 source → canonical ingredient → product mapping/rule 참조 무결성, VERIFIED source, 유효기간, 중복 활성 규칙, manifest count와 checksum 검증을 통과해야 production에서 사용됩니다. 향후 동일 interface 뒤에 관리형 DB를 연결할 수 있습니다.
+
+## Supplement rule catalog governance
+
+작성 catalog는 `SupplementRuleCatalogValidator`가 JSON shape와 semantic integrity를 함께 검사합니다. `validateSupplementRuleCatalog`는 읽기 전용 검증과 JSON report만 만들고, `buildVerifiedSupplementRuleCatalog`는 오류가 없고 reviewer/catalogVersion이 주어진 경우에만 별도 VERIFIED artifact를 원자적으로 생성합니다. 원본 파일은 변경하지 않습니다.
+
+startup loader는 기본적으로 `manifest.status=VERIFIED`, schema `1.0`, record count와 content SHA-256 일치를 요구합니다. 파일 부재나 검증 실패는 application context를 중단하지 않고 모든 catalog repository를 unavailable로 격리합니다. 분석기는 이를 `RULE_CATALOG_UNAVAILABLE`, `UNKNOWN`, incomplete coverage로 기록합니다. 로그에는 resource 경로와 안전한 오류 코드만 남기며 source 원문은 남기지 않습니다.
+
+`SupplementRuleCatalogAuditMetadata`는 catalog version, schema version, checksum, loadedAt과 record count를 분석 결과 및 evidence bundle에 보존합니다. 개별 source/rule의 선택적 `sourceVersion`/`ruleVersion`도 evidence와 LLM presentation DTO까지 보존됩니다. 인증 계층이 없으므로 catalog status public/internal HTTP endpoint는 추가하지 않았고, 내부 상태 서비스만 제공합니다.
+
+실패 단계는 `SupplementInteractionFailureCode` enum으로 service, Evidence Bundle, REST, LLM 직전 DTO가 동일하게 사용합니다. coverage 백분율은 제품·성분·매핑·catalog의 6개 semantic checkpoint와 전체 pair를 분모로 하고, 통과 checkpoint와 평가 완료 pair를 분자로 계산합니다. 따라서 pair가 0개인 `0/0`이나 제품/매핑 식별 실패가 100%가 되지 않습니다. e약은요 `NOT_FOUND`는 optional overview coverage로 보존하고 공식 약 제품·성분이 완전하면 rule 판정은 계속합니다.
 
 ## 의약품 허가정보 어댑터
 
@@ -164,7 +179,7 @@ sequenceDiagram
     participant D as DUR Provider Lookup Adapter
     participant P as 식약처 DUR API
 
-    C-. "현재 연결 보류" .->D: 향후 공식 성분코드 A, B
+    C->>D: 공식 성분코드 A, B
     D->>P: 기준 성분 A 조회
     loop A 응답의 모든 페이지
         P-->>D: items[*].item 관계 레코드
@@ -180,7 +195,7 @@ sequenceDiagram
 - 기준 성분 코드: `INGR_CODE`; 관계 성분 공식 코드: `MIXTURE_INGR_CODE`
 - 관계는 결합 문자열이 아니라 `/body/items/*/item`의 개별 레코드로 처리
 - `totalCount`/`numOfRows` 기반 모든 페이지 수집이 완료돼야 한 방향 조회가 complete
-- 공식 방향성 확인 전에는 양방향 완전 조회를 안전한 후보로 유지
+- A→B와 B→A를 각각 전체 조회하고 양방향 complete일 때만 관계 없음 후보로 유지
 - 어느 방향이든 공식 관계가 확인되면 해당 방향의 원본 근거를 보존
 - 관계 없음은 양방향·모든 페이지 성공과 실제 0건 명세가 확인된 뒤에만 판정 후보
 - 중간 페이지 실패, 응답 기준코드 불일치, 비정상 resultCode, 손실 인코딩은 실패 또는 incomplete
@@ -188,10 +203,12 @@ sequenceDiagram
 - 공식 record ID는 제공 필드에서 확인되지 않아 `providerRecordId=null`을 유지
 - 내부 중복 제거 키 `(INGR_CODE, MIXTURE_INGR_CODE, NOTIFICATION_DATE, TYPE_NAME, PROHBT_CONTENT)`는 공식 DUR ID가 아님
 - `DurLookupService`는 검증되지 않은 코드 단독 조회를 거부하고 코드와 한글명이 모두 있는 요청만 provider client에 전달
-- `InteractionCheck` 성분쌍 판정은 아직 연결하지 않아 `check` 경계의 `DUR_SCHEMA_UNVERIFIED`를 유지
+- ACTIVE 관계는 공식 원문 evidence로 변환하고 공식 record ID가 없으므로 `sourceRecordId=null`을 유지
+- 한 방향에서 위험이 확인되고 다른 방향이 실패하면 위험 severity를 유지하되 pair와 coverage는 incomplete
+- UNKNOWN provider status는 안전 실패이며 DELETED 관계는 현재 ACTIVE 근거로 사용하지 않음
 
-다음 단계 진행 조건은 A→B/B→A 방향성 정책, 삭제 레코드 판정 정책, evidence 변환을 별도로 승인한 뒤 InteractionCheck 통합 테스트를 추가하는 것입니다.
+`DrugInteractionAnalysisService`는 두 공식 제품의 전체 성분을 조회한 뒤 `IngredientComparisonService`의 Cartesian DUR 비교를 호출합니다. 공개 비동기 `POST/GET /interaction-checks`와 영속 상태 전이는 기존 Android 계약과 함께 별도 단계이며, 현재 supplement endpoint는 동기식입니다.
 
 ## 비동기 분석 방향
 
-현재는 동일 성분 비교 도메인까지만 구현했습니다. `POST /interaction-checks`를 구현할 때는 `PENDING` 저장 → 제한된 executor → `COMPLETED/PARTIAL/FAILED` 저장 → GET polling 순서로 구성합니다. JVM 재시작에도 작업이 보존되어야 하는 운영 버전에서는 DB outbox와 메시지 큐를 사용합니다.
+약–건강기능식품 `POST /api/v1/supplement-interaction-checks`는 동기식이며 억지로 비동기화하지 않습니다. 약–약 내부 `DrugInteractionAnalysisService`도 동기식 공식 제품→성분→DUR orchestration입니다. 기존 Android에 선언된 비동기 `POST/GET /interaction-checks`를 구현할 때는 `PENDING` 저장 → 제한된 executor → `COMPLETED/PARTIAL/FAILED` 저장 → GET polling 순서로 구성합니다. JVM 재시작 보존이 필요한 운영 버전의 DB/outbox/queue는 별도 승인 범위입니다.

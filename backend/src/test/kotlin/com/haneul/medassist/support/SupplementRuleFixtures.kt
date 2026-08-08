@@ -2,6 +2,7 @@ package com.haneul.medassist.support
 
 import com.haneul.medassist.domain.evidence.EvidenceAuthority
 import com.haneul.medassist.domain.evidence.EvidenceVerificationStatus
+import com.haneul.medassist.domain.evidence.SupplementRuleCatalogAuditMetadata
 import com.haneul.medassist.domain.evidence.VerifiedSourceReference
 import com.haneul.medassist.domain.medication.Ingredient
 import com.haneul.medassist.domain.medication.SourceMetadata
@@ -107,7 +108,12 @@ fun testCatalog(
     ingredients: List<SupplementIngredientCanonical> = listOf(canonicalIngredient()),
     mappings: List<SupplementProductIngredientMapping> = listOf(verifiedMapping()),
     rules: List<SupplementInteractionRule> = emptyList(),
-) = JsonSupplementRuleCatalog(SupplementRuleCatalogDocument(sources, ingredients, mappings, rules))
+    metadata: SupplementRuleCatalogAuditMetadata? = null,
+) = if (metadata == null) {
+    JsonSupplementRuleCatalog(SupplementRuleCatalogDocument(sources, ingredients, mappings, rules))
+} else {
+    JsonSupplementRuleCatalog(SupplementRuleCatalogDocument(sources, ingredients, mappings, rules), metadata)
+}
 
 fun verifiedDrugProduct(code: String = "P-1") = VerifiedDrugProduct(
     productCode = code,

@@ -1,10 +1,15 @@
 package com.haneul.medassist.dto.supplement
 
+import com.haneul.medassist.domain.evidence.SupplementRuleCatalogAuditMetadata
 import com.haneul.medassist.domain.medication.DrugOverview
+import com.haneul.medassist.domain.medication.SourceMetadata
 import com.haneul.medassist.domain.supplement.SupplementInteractionAnalysisResult
 import com.haneul.medassist.domain.supplement.SupplementInteractionCoverage
 import com.haneul.medassist.domain.supplement.SupplementInteractionEvidence
+import com.haneul.medassist.domain.supplement.SupplementInteractionFailureCode
 import com.haneul.medassist.domain.supplement.SupplementInteractionPairEvaluation
+import com.haneul.medassist.domain.supplement.SupplementInteractionExplanation
+import com.haneul.medassist.domain.supplement.SupplementInteractionPresentationResult
 import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.Pattern
 import jakarta.validation.constraints.Size
@@ -26,6 +31,7 @@ data class SupplementInteractionCheckResponse(
     val processingStatus: String,
     val severity: String,
     val message: String,
+    val explanation: SupplementInteractionExplanation,
     val medication: InteractionMedicationResponse?,
     val medicationOverview: DrugOverview?,
     val supplement: InteractionSupplementResponse?,
@@ -35,29 +41,50 @@ data class SupplementInteractionCheckResponse(
     val matchedRules: List<InteractionRuleResponse>,
     val evidence: List<SupplementInteractionEvidence>,
     val coverage: SupplementInteractionCoverage,
-    val failedSteps: Set<String>,
+    val failedSteps: Set<SupplementInteractionFailureCode>,
+    val catalogMetadata: SupplementRuleCatalogAuditMetadata,
     val disclaimer: String,
     val analyzedAt: Instant,
 ) {
     companion object {
-        fun from(result: SupplementInteractionAnalysisResult): SupplementInteractionCheckResponse =
+        fun from(presentation: SupplementInteractionPresentationResult): SupplementInteractionCheckResponse =
+            from(presentation.analysis, presentation.explanation)
+
+        private fun from(
+            result: SupplementInteractionAnalysisResult,
+            explanation: SupplementInteractionExplanation,
+        ): SupplementInteractionCheckResponse =
             SupplementInteractionCheckResponse(
                 processingStatus = result.processingStatus.name,
                 severity = result.severity.name,
                 message = result.message,
+                explanation = explanation,
                 medication = result.medication?.let {
-                    InteractionMedicationResponse(it.productCode, it.productName, it.manufacturer)
+                    InteractionMedicationResponse(it.productCode, it.productName, it.manufacturer, it.source)
                 },
                 medicationOverview = result.medicationOverview,
                 supplement = result.supplement?.let {
-                    InteractionSupplementResponse(it.statementNo, it.productName, it.manufacturer)
+                    InteractionSupplementResponse(
+                        statementNo = it.statementNo,
+                        productName = it.productName,
+                        manufacturer = it.manufacturer,
+                        registerDate = it.registerDate,
+                        intakeMethod = it.usage,
+                        intakeHint = it.intakeHint,
+                        mainFunction = it.mainFunction,
+                        baseStandard = it.baseStandard,
+                        productSource = it.source,
+                        retrievedAt = it.retrievedAt,
+                    )
                 },
                 drugIngredients = result.drugIngredients.map {
                     InteractionDrugIngredientResponse(
                         providerCode = it.providerCode,
                         displayName = it.displayName,
+                        normalizedName = it.normalizedName,
                         amount = it.amount,
                         unit = it.unit,
+                        source = it.source,
                     )
                 },
                 supplementIngredients = result.supplementIngredients.map {
@@ -67,6 +94,8 @@ data class SupplementInteractionCheckResponse(
                         displayName = it.displayName,
                         providerCode = it.providerCode,
                         category = it.category,
+                        sourceReferenceId = it.sourceReferenceId,
+                        verificationStatus = it.verificationStatus.name,
                     )
                 },
                 evaluatedPairs = result.evaluatedPairs,
@@ -83,6 +112,7 @@ data class SupplementInteractionCheckResponse(
                         recommendation = it.recommendation,
                         sourceReferenceIds = it.sourceReferenceIds,
                         verificationStatus = it.verificationStatus.name,
+                        ruleVersion = it.ruleVersion,
                         validFrom = it.validFrom,
                         validTo = it.validTo,
                     )
@@ -90,6 +120,7 @@ data class SupplementInteractionCheckResponse(
                 evidence = result.evidence,
                 coverage = result.coverage,
                 failedSteps = result.failedSteps,
+                catalogMetadata = result.catalogMetadata,
                 disclaimer = result.disclaimer,
                 analyzedAt = result.analyzedAt,
             )
@@ -100,19 +131,29 @@ data class InteractionMedicationResponse(
     val productCode: String,
     val productName: String,
     val manufacturer: String?,
+    val source: SourceMetadata,
 )
 
 data class InteractionSupplementResponse(
     val statementNo: String,
     val productName: String,
     val manufacturer: String?,
+    val registerDate: String?,
+    val intakeMethod: String?,
+    val intakeHint: String?,
+    val mainFunction: String?,
+    val baseStandard: String?,
+    val productSource: SourceMetadata,
+    val retrievedAt: Instant,
 )
 
 data class InteractionDrugIngredientResponse(
     val providerCode: String?,
     val displayName: String,
+    val normalizedName: String,
     val amount: BigDecimal?,
     val unit: String?,
+    val source: SourceMetadata,
 )
 
 data class InteractionSupplementIngredientResponse(
@@ -121,6 +162,8 @@ data class InteractionSupplementIngredientResponse(
     val displayName: String,
     val providerCode: String?,
     val category: String?,
+    val sourceReferenceId: String,
+    val verificationStatus: String,
 )
 
 data class InteractionRuleResponse(
@@ -135,6 +178,7 @@ data class InteractionRuleResponse(
     val recommendation: String,
     val sourceReferenceIds: Set<String>,
     val verificationStatus: String,
+    val ruleVersion: String?,
     val validFrom: Instant?,
     val validTo: Instant?,
 )

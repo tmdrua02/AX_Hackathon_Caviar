@@ -29,7 +29,7 @@ Kotlin, Spring Boot 4.1, Java 17 기반 의약품 검색 백엔드입니다.
 - 약–건강기능식품 Cartesian pair 판정, evidence, coverage와 additive REST endpoint
 - Android Retrofit 검색 계약
 
-DUR 병용금기 provider 조회 계층은 구현했습니다. 다만 `InteractionCheck`의 성분쌍 최종 판정에는 아직 연결하지 않았으며, 기존 `check` 경계는 계속 `DUR_SCHEMA_UNVERIFIED`를 반환합니다. 따라서 단방향 provider 조회의 성공이 곧 복용 안전 또는 `NO_KNOWN_ISSUE`로 승격되지 않습니다.
+DUR 병용금기 provider는 `IngredientComparisonService`의 공식 약 성분쌍 판정에 연결했습니다. A→B와 B→A를 모두 전체 pagination으로 조회하며, 어느 방향이든 ACTIVE 병용금기 근거가 확인되면 위험을 보존합니다. 양방향이 모두 complete일 때만 관계 없음 후보가 될 수 있고 일부 실패는 `NO_KNOWN_ISSUE`로 승격하지 않습니다. 건강기능식품 제품·원료는 이 경로에 전달하지 않습니다.
 
 e약은요는 공급실적이 있는 일반의약품 중심의 보조 설명 데이터입니다. 조회 실패나 정상 미제공 결과를 제품 부재 또는 효능 부재로 해석하지 않으며, 기존 `Medication`과 공식 성분을 변경하지 않습니다. 건강기능식품 provider는 공식 제품 기본정보만 반환하며 원재료 또는 상호작용 근거로 사용하지 않습니다. 검색은 provider를 우선하고 정상 `NOT_FOUND`일 때만 기존 index를 fallback으로 사용합니다.
 
@@ -101,7 +101,23 @@ e약은요 설정은 `DRUG_OVERVIEW_API_*` 환경변수로 덮어쓸 수 있습�
 
 따라서 현재 확인 자료만으로 `RAWMTRL_NM`을 쉼표 등으로 분해해 공식 `SupplementIngredient`를 생성하지 않습니다. 별도 식품안전나라 키가 준비되지 않았고 실제 정상 성공 및 정상 0건 응답도 재현하지 못했으므로 원재료 production provider, 캐시, evidence bundle 연결은 구현을 중단했습니다. `rawMaterialStatus=NOT_IMPLEMENTED`, `rawMaterials=NotRequested`, `ruleEvidence=NOT_EVALUATED`, `coverage.complete=false`를 유지합니다.
 
-약–건강기능식품 판정은 C003 문자열 대신 사람이 검수한 별도 제품–기능성 원료 매핑과 상호작용 규칙 catalog를 사용합니다. 기본 production catalog는 비어 있으며 의료 규칙을 코드에 하드코딩하거나 seed하지 않습니다. catalog는 `SUPPLEMENT_INTERACTION_RULES_RESOURCE`로 교체할 수 있고 startup 때 source, 검수 상태, canonical 참조, 유효기간과 중복 활성 규칙을 검증합니다. DRAFT/PENDING/REJECTED/RETIRED 데이터는 production 조회에서 제외합니다.
+약–건강기능식품 판정은 C003 문자열 대신 사람이 검수한 별도 제품–기능성 원료 매핑과 상호작용 규칙 catalog를 사용합니다. 기본 production catalog는 비어 있으며 의료 규칙을 코드에 하드코딩하거나 seed하지 않습니다. catalog는 `SUPPLEMENT_INTERACTION_RULES_RESOURCE`로 교체할 수 있고 startup 때 schema, source, 검수 상태, canonical 참조, 유효기간, 중복 활성 규칙, manifest count와 SHA-256 checksum을 검증합니다. DRAFT/PENDING/REJECTED/RETIRED 데이터는 production 조회에서 제외합니다.
+
+검수 파일은 원본을 바꾸지 않고 다음 명령으로 검증하고 승인 artifact를 만듭니다. 승인 artifact 생성에는 검수자와 명시적 catalog version이 필수입니다.
+
+```bash
+./gradlew validateSupplementRuleCatalog \
+  -PcatalogPath=/absolute/path/catalog.json \
+  -PreportPath=/absolute/path/validation-report.json
+
+./gradlew buildVerifiedSupplementRuleCatalog \
+  -PcatalogPath=/absolute/path/catalog.json \
+  -Previewer="검수자 식별값" \
+  -PcatalogVersion="2026.08.1" \
+  -PoutputPath=/absolute/path/verified-catalog.json
+```
+
+기본 설정은 VERIFIED manifest를 요구합니다. 파일 부재, schema/version/checksum 오류 또는 미승인 manifest가 있어도 서버는 시작하지만 catalog를 사용할 수 없고 약–건강기능식품 분석은 `UNKNOWN`과 `RULE_CATALOG_UNAVAILABLE`을 반환합니다. catalog 상태는 인증 없는 public endpoint로 노출하지 않으며 내부 `SupplementRuleCatalogStatusService`에서만 조회합니다.
 
 ## API 테스트
 
@@ -128,6 +144,20 @@ curl -i \
 ```
 
 `AVOID_COMBINATION`과 `CAUTION`은 VERIFIED 규칙에서만 생성됩니다. 모든 제품·약 성분 코드·검수 원료·Cartesian pair·repository가 완전하지만 일치 규칙이 없을 때만 `NO_VERIFIED_RULE_FOUND`이며, 이는 안전하다는 뜻이 아닙니다. 나머지는 실패 단계를 포함한 `UNKNOWN`입니다.
+
+응답의 `catalogMetadata`, 안정적 enum `failedSteps`, 원문 evidence와 ID를 포함하는 `SupplementInteractionExplanationRequest`가 LLM의 유일한 입력입니다. deterministic analysis가 먼저 끝난 뒤 OpenAI Responses API presentation adapter가 구조화 설명만 생성합니다. 키 미설정이나 provider 장애·부적합 출력은 backend template fallback으로 격리되고 severity·coverage·ID는 바뀌지 않습니다.
+
+Android 연결용 실제 request/response 필드, nullability, enum, Problem Details, emulator 주소와 파일별 변경 계획은 [Android integration contract](docs/android-integration-contract.md)에 고정되어 있습니다. 현재 Android 코드는 아직 이 endpoint에 연결하지 않았습니다.
+
+팀원 OpenAI transport의 환경변수 이름을 유지합니다. 키가 없어도 서버와 deterministic 분석은 정상 동작합니다.
+
+```bash
+export OPENAI_API_KEY='서버 전용 키'
+export OPENAI_CHAT_MODEL='gpt-4o-mini'
+./gradlew externalLlmTest
+```
+
+`OPENAI_CONNECT_TIMEOUT`, `OPENAI_READ_TIMEOUT`, `OPENAI_MAX_RETRIES`로 presentation 호출 정책을 제한할 수 있습니다. 실제 prompt, Evidence 원문, request/response 전체와 키는 로그에 남기지 않습니다. 자세한 경계는 [LLM integration](docs/llm-integration.md)에 기록합니다.
 
 ```bash
 curl -i \
@@ -196,7 +226,10 @@ curl -i \
 - [공공 API 매핑 상태](docs/public-data-api-mapping.md)
 - [보안 정책](docs/security.md)
 - [LLM evidence 경계](docs/llm-evidence-contract.md)
+- [LLM integration](docs/llm-integration.md)
 - [건강기능식품 검색 인덱스](docs/search-index.md)
 - [약–건강기능식품 검수 규칙](docs/supplement-interaction-rules.md)
 - [검수 규칙 import schema](docs/supplement-rule-import-schema.md)
+- [검수·승인 운영 흐름](docs/supplement-rule-review-workflow.md)
+- [Pre-LLM readiness](docs/pre-llm-readiness.md)
 - [DB 스키마 초안](docs/database-schema.sql)

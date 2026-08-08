@@ -26,7 +26,9 @@ class IngredientComparisonService(
             status = severity,
             summary = summary(severity),
             ingredientPairs = pairs,
-            evidence = pairs.flatMap { it.evidence }.distinctBy { it.sourceName to it.sourceRecordId },
+            evidence = pairs.flatMap { it.evidence }.distinctBy {
+                listOf(it.sourceName, it.sourceRecordId, it.providerReference, it.originalMessage)
+            },
             coverage = coverage,
         )
     }
@@ -46,8 +48,22 @@ class IngredientComparisonService(
             )
         }
         return when (val dur = durClient.check(left, right)) {
-            is DurPairLookupResult.Prohibited -> IngredientPairResult(left, right, PairStatus.PROHIBITED, dur.evidence)
-            is DurPairLookupResult.Caution -> IngredientPairResult(left, right, PairStatus.CAUTION, dur.evidence)
+            is DurPairLookupResult.Prohibited -> IngredientPairResult(
+                left,
+                right,
+                PairStatus.PROHIBITED,
+                dur.evidence,
+                dur.safeErrorCode,
+                dur.complete,
+            )
+            is DurPairLookupResult.Caution -> IngredientPairResult(
+                left,
+                right,
+                PairStatus.CAUTION,
+                dur.evidence,
+                dur.safeErrorCode,
+                dur.complete,
+            )
             DurPairLookupResult.NoMatch -> IngredientPairResult(left, right, PairStatus.NO_MATCH, emptyList())
             is DurPairLookupResult.Failure -> IngredientPairResult(left, right, PairStatus.FAILED, emptyList(), dur.safeErrorCode)
         }

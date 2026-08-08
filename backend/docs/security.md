@@ -22,3 +22,8 @@
 - e약은요의 `efcyQesitm` 등 공식 의료 텍스트는 원문을 보존하며 HTML 표시 정제 과정에서 요약하거나 의료 의미를 바꾸지 않는다.
 - 정상 빈 응답만 negative cache할 수 있고 인증·quota·timeout·provider·인코딩 오류는 캐시하지 않는다.
 - 건강기능식품 제품 기본정보를 원재료 또는 상호작용 근거로 승격하지 않으며, 미조회 원재료를 빈 목록인 것처럼 기록하지 않는다.
+- catalog source 원문과 전체 Evidence Bundle을 debug/info 로그에 기록하지 않는다. startup 로그는 resource 경로와 안전한 validation code만 남긴다.
+- Android 소스에는 data.go.kr 서비스키나 공공 API 직접 호출 URL을 포함하지 않는다. 앱은 백엔드의 additive REST 계약만 사용한다.
+- `OPENAI_API_KEY`는 서버 환경변수로만 읽고 Android, YAML plaintext, fixture 또는 exception에 포함하지 않는다.
+- OpenAI 전체 prompt, `SupplementInteractionExplanationRequest`, Evidence 원문과 전체 응답은 production 로그에 기록하지 않는다.
+- LLM provider 오류는 안전한 category로만 변환하며 deterministic severity·coverage·failedSteps를 변경하지 않는다.

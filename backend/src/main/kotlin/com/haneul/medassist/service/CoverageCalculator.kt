@@ -15,7 +15,7 @@ class CoverageCalculator {
     ): Coverage {
         val totalIngredients = left.size + right.size
         val resolvedIngredients = (left + right).count { !it.providerCode.isNullOrBlank() }
-        val completedPairs = pairs.count { it.status != PairStatus.FAILED }
+        val completedPairs = pairs.count(IngredientPairResult::complete)
         val failedPairs = pairs.size - completedPairs
         val percentage = if (pairs.isEmpty()) 0 else completedPairs * 100 / pairs.size
         return Coverage(

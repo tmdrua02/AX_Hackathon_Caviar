@@ -2,10 +2,14 @@ package com.haneul.medassist.domain.supplement
 
 import com.haneul.medassist.domain.evidence.EvidenceAuthority
 import com.haneul.medassist.domain.evidence.EvidenceVerificationStatus
+import com.haneul.medassist.domain.evidence.SupplementRuleCatalogAuditMetadata
 import com.haneul.medassist.domain.evidence.VerifiedSourceReference
 import com.haneul.medassist.domain.medication.DrugOverview
 import com.haneul.medassist.domain.medication.Ingredient
+import com.haneul.medassist.domain.medication.SourceMetadata
 import com.haneul.medassist.domain.medication.VerifiedDrugProduct
+import com.fasterxml.jackson.annotation.JsonIgnore
+import java.math.BigDecimal
 import java.time.Instant
 
 enum class SupplementInteractionSeverity {
@@ -19,6 +23,24 @@ enum class SupplementInteractionProcessingStatus {
     COMPLETED,
     PARTIAL,
     FAILED,
+}
+
+enum class SupplementInteractionFailureCode {
+    MEDICATION_NOT_FOUND,
+    MEDICATION_PRODUCT_LOOKUP_FAILED,
+    MEDICATION_INGREDIENT_LOOKUP_FAILED,
+    MEDICATION_INGREDIENT_CODE_MISSING,
+    MEDICATION_OVERVIEW_LOOKUP_FAILED,
+    SUPPLEMENT_NOT_FOUND,
+    SUPPLEMENT_PRODUCT_LOOKUP_FAILED,
+    SUPPLEMENT_INGREDIENT_MAPPING_MISSING,
+    SUPPLEMENT_INGREDIENT_MAPPING_LOOKUP_FAILED,
+    SUPPLEMENT_INGREDIENT_UNVERIFIED,
+    RULE_CATALOG_UNAVAILABLE,
+    RULE_CATALOG_INVALID,
+    RULE_LOOKUP_FAILED,
+    RULE_SOURCE_UNVERIFIED,
+    PAIR_EVALUATION_INCOMPLETE,
 }
 
 data class SupplementIngredientCanonical(
@@ -43,6 +65,7 @@ data class SupplementIngredientCanonical(
         require(!updatedAt.isBefore(createdAt)) { "updatedAt must not precede createdAt" }
     }
 
+    @JsonIgnore
     fun isProductionEligible(): Boolean = active && verificationStatus == EvidenceVerificationStatus.VERIFIED
 }
 
@@ -83,6 +106,7 @@ data class SupplementProductIngredientMapping(
         require(!updatedAt.isBefore(createdAt)) { "updatedAt must not precede createdAt" }
     }
 
+    @JsonIgnore
     fun isProductionEligible(at: Instant): Boolean =
         verificationStatus == EvidenceVerificationStatus.VERIFIED &&
             mappingType != MappingType.UNVERIFIED_CANDIDATE &&
@@ -122,6 +146,7 @@ data class SupplementInteractionRule(
     val validTo: Instant? = null,
     val createdAt: Instant,
     val updatedAt: Instant,
+    val ruleVersion: String? = null,
 ) {
     init {
         require(id.isNotBlank()) { "rule id must not be blank" }
@@ -142,6 +167,7 @@ data class SupplementInteractionRule(
         require(!updatedAt.isBefore(createdAt)) { "updatedAt must not precede createdAt" }
     }
 
+    @JsonIgnore
     fun isProductionEligible(at: Instant): Boolean =
         verificationStatus == EvidenceVerificationStatus.VERIFIED &&
             (validFrom == null || !at.isBefore(validFrom)) &&
@@ -177,10 +203,12 @@ data class SupplementInteractionCoverage(
 )
 
 data class SupplementInteractionEvidence(
+    val ruleId: String,
     val evidenceType: String,
     val sourceAuthority: EvidenceAuthority,
     val sourceReferenceId: String,
     val title: String,
+    val sourceTitle: String,
     val originalText: String,
     val drugIngredientCode: String,
     val drugIngredientName: String,
@@ -188,6 +216,8 @@ data class SupplementInteractionEvidence(
     val supplementIngredientName: String,
     val severity: SupplementInteractionSeverity,
     val verificationStatus: EvidenceVerificationStatus,
+    val ruleVersion: String?,
+    val sourceVersion: String?,
     val validFrom: Instant?,
     val validTo: Instant?,
     val retrievedAt: Instant,
@@ -198,12 +228,15 @@ data class SupplementInteractionEvidenceBundle(
     val officialMedicationIngredients: List<Ingredient>,
     val medicationOverview: DrugOverview?,
     val officialSupplementProduct: SupplementProductSnapshot?,
+    val verifiedSupplementMappings: List<SupplementProductIngredientMapping>,
     val verifiedSupplementIngredients: List<SupplementIngredientCanonical>,
+    val supplementMappingSourceReferences: List<VerifiedSourceReference>,
     val matchedInteractionRules: List<SupplementInteractionRule>,
     val sourceReferences: List<VerifiedSourceReference>,
     val immutableDecision: SupplementInteractionSeverity,
+    val catalogMetadata: SupplementRuleCatalogAuditMetadata,
     val coverage: SupplementInteractionCoverage,
-    val failedSteps: Set<String>,
+    val failedSteps: Set<SupplementInteractionFailureCode>,
     val analyzedAt: Instant,
     val disclaimer: String,
 )
@@ -220,59 +253,140 @@ data class SupplementInteractionAnalysisResult(
     val matchedRules: List<SupplementInteractionRule>,
     val evidence: List<SupplementInteractionEvidence>,
     val coverage: SupplementInteractionCoverage,
-    val failedSteps: Set<String>,
+    val failedSteps: Set<SupplementInteractionFailureCode>,
     val message: String,
     val disclaimer: String,
     val analyzedAt: Instant,
+    val catalogMetadata: SupplementRuleCatalogAuditMetadata,
     val evidenceBundle: SupplementInteractionEvidenceBundle,
 )
 
 data class SupplementInteractionExplanationRequest(
     val immutableDecision: SupplementInteractionSeverity,
-    val medicationName: String?,
-    val supplementName: String?,
+    val catalogMetadata: SupplementRuleCatalogAuditMetadata,
+    val medication: ExplanationMedication?,
+    val supplement: ExplanationSupplement?,
     val officialDrugIngredients: List<ExplanationDrugIngredient>,
     val verifiedSupplementIngredients: List<ExplanationSupplementIngredient>,
     val matchedRules: List<ExplanationMatchedRule>,
-    val evidenceTexts: List<ExplanationEvidenceText>,
+    val evidence: List<SupplementInteractionEvidence>,
     val coverage: SupplementInteractionCoverage,
-    val failedSteps: Set<String>,
+    val failedSteps: Set<SupplementInteractionFailureCode>,
     val disclaimer: String,
+)
+
+data class ExplanationMedication(
+    val productCode: String,
+    val officialProductName: String,
+    val manufacturer: String?,
+    val overview: DrugOverview?,
+    val source: SourceMetadata,
+    val retrievedAt: Instant,
+)
+
+data class ExplanationSupplement(
+    val statementNo: String,
+    val officialProductName: String,
+    val manufacturer: String?,
+    val registerDate: String?,
+    val intakeMethod: String?,
+    val intakeHint: String?,
+    val mainFunction: String?,
+    val baseStandard: String?,
+    val productSource: SourceMetadata,
+    val retrievedAt: Instant,
 )
 
 data class ExplanationDrugIngredient(
     val providerCode: String?,
     val displayName: String,
+    val normalizedName: String,
+    val amount: BigDecimal?,
+    val unit: String?,
+    val source: SourceMetadata,
+    val retrievedAt: Instant,
 )
 
 data class ExplanationSupplementIngredient(
     val canonicalId: String,
     val displayName: String,
+    val providerCode: String?,
+    val category: String?,
+    val sourceReferenceId: String,
+    val verificationStatus: EvidenceVerificationStatus,
 )
 
 data class ExplanationMatchedRule(
     val ruleId: String,
     val severity: SupplementInteractionSeverity,
-)
-
-data class ExplanationEvidenceText(
-    val sourceReferenceId: String,
-    val originalText: String,
+    val ruleVersion: String?,
+    val interactionType: InteractionType,
+    val userMessage: String,
+    val recommendation: String,
+    val sourceReferenceIds: Set<String>,
 )
 
 fun SupplementInteractionAnalysisResult.toExplanationRequest(): SupplementInteractionExplanationRequest =
     SupplementInteractionExplanationRequest(
         immutableDecision = severity,
-        medicationName = medication?.productName,
-        supplementName = supplement?.productName,
+        catalogMetadata = catalogMetadata,
+        medication = medication?.let {
+            ExplanationMedication(
+                productCode = it.productCode,
+                officialProductName = it.productName,
+                manufacturer = it.manufacturer,
+                overview = medicationOverview,
+                source = it.source,
+                retrievedAt = it.source.retrievedAt,
+            )
+        },
+        supplement = supplement?.let {
+            ExplanationSupplement(
+                statementNo = it.statementNo,
+                officialProductName = it.productName,
+                manufacturer = it.manufacturer,
+                registerDate = it.registerDate,
+                intakeMethod = it.usage,
+                intakeHint = it.intakeHint,
+                mainFunction = it.mainFunction,
+                baseStandard = it.baseStandard,
+                productSource = it.source,
+                retrievedAt = it.retrievedAt,
+            )
+        },
         officialDrugIngredients = drugIngredients.map {
-            ExplanationDrugIngredient(it.providerCode, it.displayName)
+            ExplanationDrugIngredient(
+                providerCode = it.providerCode,
+                displayName = it.displayName,
+                normalizedName = it.normalizedName,
+                amount = it.amount,
+                unit = it.unit,
+                source = it.source,
+                retrievedAt = it.source.retrievedAt,
+            )
         },
         verifiedSupplementIngredients = supplementIngredients.map {
-            ExplanationSupplementIngredient(it.id, it.displayName)
+            ExplanationSupplementIngredient(
+                canonicalId = it.id,
+                displayName = it.displayName,
+                providerCode = it.providerCode,
+                category = it.category,
+                sourceReferenceId = it.sourceReferenceId,
+                verificationStatus = it.verificationStatus,
+            )
         },
-        matchedRules = matchedRules.map { ExplanationMatchedRule(it.id, it.severity) },
-        evidenceTexts = evidence.map { ExplanationEvidenceText(it.sourceReferenceId, it.originalText) },
+        matchedRules = matchedRules.map {
+            ExplanationMatchedRule(
+                ruleId = it.id,
+                severity = it.severity,
+                ruleVersion = it.ruleVersion,
+                interactionType = it.interactionType,
+                userMessage = it.userMessage,
+                recommendation = it.recommendation,
+                sourceReferenceIds = it.sourceReferenceIds,
+            )
+        },
+        evidence = evidence,
         coverage = coverage,
         failedSteps = failedSteps,
         disclaimer = disclaimer,

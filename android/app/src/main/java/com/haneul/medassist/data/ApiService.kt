@@ -15,6 +15,16 @@ interface ApiService {
     @POST("api/v1/drug-products/search")
     suspend fun searchDrugProducts(@Body request: DrugProductSearchRequest): DrugProductSearchResponse
 
+    @POST("api/v1/supplement-products/search")
+    suspend fun searchSupplementProducts(
+        @Body request: SupplementProductSearchRequest,
+    ): SupplementProductSearchResponse
+
+    @POST("api/v1/supplement-interaction-checks")
+    suspend fun checkSupplementInteraction(
+        @Body request: SupplementInteractionCheckRequest,
+    ): SupplementInteractionCheckResponse
+
     @GET("api/v1/home")
     suspend fun home(@Header("X-Demo-User-Id") userId: String = DEMO_USER): HomeResponse
 

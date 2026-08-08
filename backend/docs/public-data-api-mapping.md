@@ -61,7 +61,7 @@
 - 공식 데이터셋: https://www.data.go.kr/data/15056780/openapi.do
 - 현재 단계: 실제 provider 조회 client, 응답 매핑, pagination, MockWebServer 테스트, opt-in 외부 통합 테스트 구현 완료
 
-서비스키와 전체 요청 URL/query string은 문서화하지 않는다. 실제 provider 조회는 `PublicDataDurIngredientApiClient`가 담당하지만 InteractionCheck의 성분쌍 판정 경계는 아직 연결하지 않아 `DUR_SCHEMA_UNVERIFIED`를 유지한다.
+서비스키와 전체 요청 URL/query string은 문서화하지 않는다. `PublicDataDurIngredientApiClient`의 검증된 조회를 공식 약 성분쌍에 한해 양방향 호출하며, 건강기능식품 제품·canonical 원료에는 사용하지 않는다.
 
 ### 실제 호출 검증 (최종 재검증: 2026-08-06 KST)
 
@@ -90,7 +90,7 @@
 | 이름만 | 미지원 | 기준 공식 코드를 필수로 검증 |
 | `typeName` 생략 | 외부 동작 미확인 | client는 항상 `병용금기` 전송 및 응답 유형 검증 |
 | 코드·이름 불일치 | 외부 우선순위 미확인 | 응답 기준 코드는 요청 코드와 정확히 일치해야 함 |
-| A→B/B→A | 방향 대칭성 미확인 | InteractionCheck 통합 전 양방향 정책 승인 필요 |
+| A→B/B→A | 단일 방향 대칭성은 가정하지 않음 | 두 기준 성분을 각각 조회하고 양쪽 complete 필요 |
 
 pagination은 응답 `totalCount`와 `numOfRows`로 총 페이지 수를 계산하고 `maxPages`/`maxRecords`를 적용한다. 모든 페이지가 성공하고 수집한 원본 record 수가 `totalCount`와 같아야 `complete=true`이다. 중간 페이지 실패나 메타데이터 불일치는 `PARTIAL` 또는 `FAILED`이며 `NO_MATCH`로 변환하지 않는다.
 
@@ -218,7 +218,7 @@ provider에 없는 값은 채우지 않는다. 기존 의약품 허가정보 DTO
 5. 공식 record ID 제공 여부의 문서 확인
 6. `DEL_YN`, `MIX`, `ORI`, `CLASS` 및 대응 `MIXTURE_*` 필드의 공식 의미와 허용값
 
-provider client는 구현됐지만 위 자료와 양방향 판정 정책을 승인하기 전에는 `InteractionCheck` 연결을 시작하지 않는다.
+pair 경계는 A와 B 각각을 기준 성분으로 조회한다. 어느 방향이든 ACTIVE 관계가 있으면 원문 위험 근거를 보존하고, 양방향이 모두 complete인 경우에만 관계 없음 후보를 반환한다. 일부 실패가 있으면 확인된 위험은 유지할 수 있지만 coverage는 incomplete다.
 
 ## 의약품개요정보(e약은요)
 
@@ -349,7 +349,7 @@ opt-in Kotlin 외부 통합 테스트에서 제품명 검색은 `RESOLVED`, `tot
 - 검색은 provider 우선이며 provider `NOT_FOUND`일 때만 `SupplementSearchIndex` fallback 사용
 - provider 실패를 index 결과나 정상 빈 결과로 숨기지 않음
 
-이 API는 제품 기본정보 provider이며 원재료 API가 아니다. `rawMaterialStatus=NOT_IMPLEMENTED`, `rawMaterials=NotRequested`, `ruleEvidence=NOT_EVALUATED`, `coverage.complete=false` 경계는 유지한다. DUR, InteractionCheck, LLM과 연결하지 않는다.
+이 API는 제품 기본정보 provider이며 원재료 API가 아니다. 제품 snapshot은 약–건강기능식품 분석의 제품 식별 근거로만 사용하고, 원료는 별도 VERIFIED mapping에서만 가져온다. 제품 설명을 DUR이나 LLM에 원료로 전달하지 않으며 C003 자동 분해도 하지 않는다.
 
 ## 건강기능식품 품목제조신고(원재료) C003 검증
 

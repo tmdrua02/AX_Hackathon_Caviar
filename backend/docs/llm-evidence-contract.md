@@ -1,6 +1,6 @@
 # LLM Evidence Contract
 
-현재 LLM 연동 코드는 구현하지 않는다. 향후에도 LLM은 판정 엔진이 아니라 근거 기반 설명 생성기다.
+OpenAI 연동은 판정 엔진 뒤의 근거 기반 설명 생성기로만 구현한다.
 
 ## 허용 입력
 
@@ -26,6 +26,10 @@
 
 ## 약–건강기능식품 설명 입력
 
-`SupplementInteractionExplanationRequest`는 backend가 확정한 `immutableDecision`, 공식 제품명·약 성분, VERIFIED canonical 원료, 일치 rule ID, evidence 원문, coverage, 실패 단계와 disclaimer만 전달합니다. LLM은 severity, 제품/성분 코드, canonical/rule/source ID, coverage 또는 실패 단계를 수정할 수 없습니다. LLM 출력이 backend 판정과 다르면 backend의 immutable decision을 사용합니다.
+`SupplementInteractionExplanationRequest`는 backend가 확정한 `immutableDecision`, 구조화된 공식 medication/supplement snapshot, 공식 약 성분 코드·정규명·함량·단위·source, VERIFIED canonical ID/source, 일치 rule ID/version, evidence 원문과 source ID/version, catalog version/schema/checksum/loadedAt, coverage, enum 실패 단계와 disclaimer만 전달합니다. Jackson 직렬화 테스트로 순환 참조 없이 ID와 원문이 보존되는지 검증합니다. LLM은 severity, catalog metadata, 제품/성분 코드, canonical/rule/source ID, coverage 또는 실패 단계를 수정할 수 없습니다. LLM 출력이 backend 판정과 다르면 backend의 immutable decision을 사용합니다.
 
-**LLM은 판정 엔진이 아니라 Evidence를 사용자 친화적으로 설명하는 presentation layer입니다.** 이번 구현에는 LLM 호출, client, prompt 또는 응답 병합 코드가 없습니다.
+`SupplementInteractionPresentationService`는 `SupplementInteractionAnalysisResult.toExplanationRequest()`가 반환하는 DTO만 `SupplementInteractionExplanationService`에 전달합니다. OpenAI adapter는 Responses API의 strict JSON schema를 사용하며 출력에는 summary, rationale, consultationAdvice, keyPoints만 허용합니다.
+
+키 미설정, timeout, 401/403, 429, 5xx, malformed/empty response, 길이 위반 또는 위험한 안전 표현은 LLM 출력을 버리고 backend fallback을 사용합니다. fallback도 새로운 의료 사실을 만들지 않습니다.
+
+**LLM은 판정 엔진이 아니라 Evidence를 사용자 친화적으로 설명하는 presentation layer입니다.**
