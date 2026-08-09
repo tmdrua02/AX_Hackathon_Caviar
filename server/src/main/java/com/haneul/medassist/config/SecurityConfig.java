@@ -19,7 +19,7 @@ public class SecurityConfig {
     }
 
     @Bean
-    @Profile("!mock")
+    @Profile("local")
     SecurityFilterChain secureByDefault(HttpSecurity http) throws Exception {
         return http.csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(auth -> auth
@@ -27,6 +27,18 @@ public class SecurityConfig {
                         .anyRequest().authenticated())
                 // JWT/OIDC 어댑터를 붙이기 전에는 모든 운영 API를 HTTP Basic으로 보호한다.
                 .httpBasic(Customizer.withDefaults())
+                .build();
+    }
+
+    @Bean
+    @Profile("prod")
+    SecurityFilterChain proxyProtectedProduction(HttpSecurity http) throws Exception {
+        // Production containers have no published port; Caddy performs the demo-token check before proxying.
+        return http.csrf(csrf -> csrf.disable())
+                .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
+                .headers(headers -> headers
+                        .contentTypeOptions(options -> {})
+                        .frameOptions(frame -> frame.deny()))
                 .build();
     }
 }

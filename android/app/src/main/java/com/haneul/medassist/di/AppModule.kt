@@ -20,7 +20,16 @@ import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import java.util.concurrent.TimeUnit
+import javax.inject.Qualifier
 import javax.inject.Singleton
+
+@Qualifier
+@Retention(AnnotationRetention.BINARY)
+annotation class MainHttpClient
+
+@Qualifier
+@Retention(AnnotationRetention.BINARY)
+annotation class SupplementHttpClient
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -35,18 +44,49 @@ object AppModule {
 
     @Provides
     @Singleton
-    fun httpClient(): OkHttpClient = OkHttpClient.Builder()
+    @MainHttpClient
+    fun mainHttpClient(): OkHttpClient = baseHttpClient()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(45, TimeUnit.SECONDS)
-        .addInterceptor(HttpLoggingInterceptor().apply {
-            level = if (BuildConfig.DEBUG) HttpLoggingInterceptor.Level.BASIC else HttpLoggingInterceptor.Level.NONE
-            redactHeader("Authorization")
-            redactHeader("X-Demo-User-Id")
-        }).build()
+        .writeTimeout(45, TimeUnit.SECONDS)
+        .addInterceptor { chain ->
+            val path = chain.request().url.encodedPath
+            when {
+                path.endsWith("/stream") -> chain.withReadTimeout(60, TimeUnit.SECONDS).proceed(chain.request())
+                path == "/api/v1/consultations" -> chain.withWriteTimeout(180, TimeUnit.SECONDS)
+                    .withReadTimeout(60, TimeUnit.SECONDS).proceed(chain.request())
+                else -> chain.proceed(chain.request())
+            }
+        }.build()
 
     @Provides
     @Singleton
-    fun api(client: OkHttpClient, json: Json): ApiService = Retrofit.Builder()
+    @SupplementHttpClient
+    fun supplementHttpClient(): OkHttpClient = baseHttpClient()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .build()
+
+    private fun baseHttpClient(): OkHttpClient.Builder = OkHttpClient.Builder()
+        .addInterceptor { chain ->
+            val request = chain.request().newBuilder().apply {
+                if (BuildConfig.DEMO_API_TOKEN.isNotBlank()) {
+                    header("X-Demo-Api-Key", BuildConfig.DEMO_API_TOKEN)
+                }
+            }.build()
+            chain.proceed(request)
+        }
+        .addInterceptor(HttpLoggingInterceptor().apply {
+            level = if (BuildConfig.DEBUG) HttpLoggingInterceptor.Level.BASIC else HttpLoggingInterceptor.Level.NONE
+            redactHeader("Authorization")
+            redactHeader("X-Demo-Api-Key")
+            redactHeader("X-Demo-User-Id")
+        })
+
+    @Provides
+    @Singleton
+    fun api(@MainHttpClient client: OkHttpClient, json: Json): ApiService = Retrofit.Builder()
         .baseUrl(BuildConfig.API_BASE_URL)
         .client(client)
         .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
@@ -54,7 +94,7 @@ object AppModule {
 
     @Provides
     @Singleton
-    fun supplementApi(client: OkHttpClient, json: Json): SupplementApiService = Retrofit.Builder()
+    fun supplementApi(@SupplementHttpClient client: OkHttpClient, json: Json): SupplementApiService = Retrofit.Builder()
         .baseUrl(BuildConfig.SUPPLEMENT_API_BASE_URL)
         .client(client)
         .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))

@@ -3,6 +3,7 @@ package com.haneul.medassist.data
 import android.content.ContentResolver
 import android.net.Uri
 import com.haneul.medassist.BuildConfig
+import com.haneul.medassist.di.MainHttpClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -24,7 +25,7 @@ import javax.inject.Singleton
 class MedAssistRepository @Inject constructor(
     private val api: ApiService,
     private val database: MedAssistDatabase,
-    private val client: OkHttpClient,
+    @MainHttpClient private val client: OkHttpClient,
     private val json: Json,
     private val supplementInteractionRemoteDataSource: SupplementInteractionRemoteDataSource,
 ) {

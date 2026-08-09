@@ -1,0 +1,55 @@
+{$SERVER_ADDRESS:http://localhost} {
+    header {
+        -Server
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy no-referrer
+        Permissions-Policy "camera=(), geolocation=(), microphone=()"
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    }
+
+    @upload path /api/v1/consultations /api/v1/prescription-drafts
+    request_body @upload {
+        max_size 32MB
+    }
+
+    handle /health {
+        reverse_proxy backend:8081
+    }
+
+    handle /actuator/health* {
+        reverse_proxy server:8080
+    }
+
+    @backendAuthorized {
+        header X-Demo-Api-Key {$DEMO_API_TOKEN}
+        path /api/v1/drug-products /api/v1/drug-products/* /api/v1/supplement-products /api/v1/supplement-products/* /api/v1/supplement-interaction-checks /api/v1/supplement-interaction-checks/*
+    }
+    handle @backendAuthorized {
+        reverse_proxy backend:8081
+    }
+
+    @mainAuthorized {
+        header X-Demo-Api-Key {$DEMO_API_TOKEN}
+        path /api/*
+    }
+    handle @mainAuthorized {
+        reverse_proxy server:8080 {
+            flush_interval -1
+        }
+    }
+
+    handle /api/* {
+        header Content-Type application/json
+        respond `{"code":"UNAUTHORIZED","message":"유효한 데모 접근 토큰이 필요합니다."}` 401
+    }
+
+    handle {
+        respond 404
+    }
+
+    log {
+        output stdout
+        format json
+    }
+}

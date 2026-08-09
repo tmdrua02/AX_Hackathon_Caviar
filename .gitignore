@@ -5,6 +5,7 @@
 **/bin/
 /tmp/
 **/uploads/
+backups/
 
 *.apk
 *.aab
