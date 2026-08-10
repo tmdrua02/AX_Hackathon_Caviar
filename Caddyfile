@@ -50,6 +50,9 @@
 
     log {
         output stdout
-        format json
+        format filter {
+            request>headers>X-Demo-Api-Key delete
+            wrap json
+        }
     }
 }
