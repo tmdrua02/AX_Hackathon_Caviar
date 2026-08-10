@@ -5,6 +5,7 @@ Kotlin, Spring Boot 4.1, Java 17 기반 의약품 검색 백엔드입니다.
 ## 현재 구현 범위
 
 - `POST /api/v1/drug-products/search`
+- `POST /api/v1/drug-interaction-checks` 다중 약–약 공식 성분/DUR 분석
 - Unicode NFKC, 공백, 제형, 용량, 단위, 제조사 힌트 정규화
 - 공식 제품 후보 점수 계산 및 정렬
 - 식약처 제품 허가정보 API용 `RestClient`
@@ -53,10 +54,25 @@ Android 에뮬레이터의 백엔드 주소는 `http://10.0.2.2:8081/`입니다.
 
 서비스키는 Android나 Git에 저장하지 않습니다.
 
+백엔드는 실행 디렉터리의 `.env`, 상위 디렉터리의 `.env`, 또는 저장소 루트에서 실행할 때의 `backend/.env`를 선택적으로 읽습니다. 셸 환경변수가 있으면 동일한 이름의 값을 덮어씁니다.
+
 ```bash
 export DATA_GO_KR_SERVICE_KEY='발급받은키'
 export DATA_GO_KR_SERVICE_KEY_ENCODED='true'
 ```
+
+약–약 분석 요청은 새 약의 공식 품목기준코드와 기존 약의 공식 품목기준코드 목록을 사용합니다.
+
+```bash
+curl -X POST http://localhost:8081/api/v1/drug-interaction-checks \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "newMedicationProductCode": "공식_ITEM_SEQ_1",
+    "existingMedicationProductCodes": ["공식_ITEM_SEQ_2"]
+  }'
+```
+
+제품·성분·DUR 조회가 일부라도 실패하면 `NO_KNOWN_ISSUE`로 승격하지 않고 `PARTIAL` 또는 `FAILED`와 `failedSteps`를 반환합니다.
 
 의약품 허가정보의 확인된 Swagger 매핑은 기본값으로 적용되어 있습니다. 다음 환경변수는 공급자 변경이나 검증 환경에서 기본값을 덮어쓸 때만 사용합니다.
 

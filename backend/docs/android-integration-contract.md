@@ -1,6 +1,22 @@
 # Android Integration Contract
 
-이 문서는 현재 backend 코드의 약–건강기능식품 분석 계약과 Android 연결 구현의 기준이다. Android는 공식 건강기능식품 후보의 `sttemntNo`와 확정된 의약품 `productCode`를 보존하여 이 endpoint를 호출한다.
+이 문서는 현재 backend 코드의 약–약 및 약–건강기능식품 분석 계약과 Android 연결 구현의 기준이다. Android는 공식 후보 선택으로 확정한 의약품 `productCode`와 건강기능식품 `sttemntNo`를 보존하여 각 endpoint를 호출한다.
+
+## Drug-to-drug interaction
+
+- endpoint: `POST /api/v1/drug-interaction-checks`
+- request: 새 약 `newMedicationProductCode`, 기존 약 `existingMedicationProductCodes`(최대 20개)
+- 처리: 각 제품의 공식 제품정보와 전체 성분을 확인한 뒤 Cartesian 성분쌍을 DUR 양방향으로 조회한다.
+- 실패 정책: 제품·성분·DUR coverage가 불완전하면 `NO_KNOWN_ISSUE`가 아니라 `PARTIAL` 또는 `FAILED`를 반환한다.
+
+Android의 일반 동시복용 화면은 이 endpoint를 사용한다. 건강기능식품과 공식 품목코드가 없는 제품은 약–약 요청에서 제외하고 UI에 `UNKNOWN` 사유를 명시한다. 분석 결과의 판정·coverage·공식 근거 요약은 사용자가 메디봇을 열었을 때 `officialContext`로 8080 챗봇 계약에 전달된다.
+
+```json
+{
+  "newMedicationProductCode": "ITEM_SEQ_A",
+  "existingMedicationProductCodes": ["ITEM_SEQ_B", "ITEM_SEQ_C"]
+}
+```
 
 ## Connection
 

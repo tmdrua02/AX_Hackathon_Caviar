@@ -183,7 +183,7 @@ data class Consultation(
 data class ChatSession(val id: String, val createdAt: String)
 
 @Serializable
-data class ChatMessageRequest(val message: String)
+data class ChatMessageRequest(val message: String, val officialContext: String? = null)
 
 @Serializable
 data class ChatMessageAccepted(val messageId: String, val streamUrl: String)

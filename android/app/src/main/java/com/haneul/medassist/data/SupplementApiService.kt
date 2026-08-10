@@ -5,6 +5,11 @@ import retrofit2.http.POST
 
 /** API served by the standalone medication/supplement backend (port 8081 in local development). */
 interface SupplementApiService {
+    @POST("api/v1/drug-interaction-checks")
+    suspend fun checkDrugInteractions(
+        @Body request: DrugInteractionBatchRequest,
+    ): DrugInteractionBatchResponse
+
     @POST("api/v1/drug-products/search")
     suspend fun searchDrugProducts(
         @Body request: DrugProductSearchRequest,

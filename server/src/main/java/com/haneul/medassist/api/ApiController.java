@@ -164,18 +164,19 @@ public class ApiController {
     @PostMapping("/chat/sessions/{id}/messages")
     ResponseEntity<ChatMessageAccepted> chatMessage(@PathVariable UUID id,
                                                     @Valid @RequestBody ChatMessageRequest request) {
-        UUID message = store.addChatMessage(id, request.message());
+        UUID message = store.addChatMessage(id, request.message(), request.officialContext());
         return ResponseEntity.accepted().body(new ChatMessageAccepted(message, "/api/v1/chat/sessions/" + id + "/stream"));
     }
 
     @GetMapping(value = "/chat/sessions/{id}/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     SseEmitter stream(@PathVariable UUID id) {
         String prompt = store.lastPrompt(id);
+        String officialContext = store.lastOfficialContext(id);
         SseEmitter emitter = new SseEmitter(30_000L);
         try {
             CompletableFuture.runAsync(() -> {
                 try {
-                    chat.stream(DemoStore.DEMO_USER, prompt, part -> {
+                    chat.stream(DemoStore.DEMO_USER, officialContext, prompt, part -> {
                         try { emitter.send(SseEmitter.event().name("delta").data(Map.of("text", part))); }
                         catch (IOException exception) { throw new RuntimeException(exception); }
                     });

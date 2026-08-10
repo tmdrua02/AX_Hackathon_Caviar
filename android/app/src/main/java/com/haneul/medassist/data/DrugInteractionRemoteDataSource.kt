@@ -1,56 +1,31 @@
 package com.haneul.medassist.data
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
-import kotlinx.coroutines.CancellationException
 import retrofit2.HttpException
 import java.io.IOException
 import java.net.SocketTimeoutException
 import javax.inject.Inject
 import javax.inject.Singleton
 
-enum class SupplementInteractionTransportFailure {
-    HTTP,
-    TIMEOUT,
-    NETWORK,
-    MALFORMED_RESPONSE,
-}
-
-class SupplementInteractionRequestException(
-    val failure: SupplementInteractionTransportFailure,
-    val problemCode: String? = null,
-    val httpStatus: Int? = null,
-    message: String,
-    cause: Throwable? = null,
-) : RuntimeException(message, cause)
-
 @Singleton
-class SupplementInteractionRemoteDataSource @Inject constructor(
+class DrugInteractionRemoteDataSource @Inject constructor(
     private val api: SupplementApiService,
     private val json: Json,
 ) {
     suspend fun check(
-        medicationProductCode: String,
-        supplementStatementNo: String,
-    ): Result<SupplementInteractionCheckResponse> = remoteCall {
-        api.checkSupplementInteraction(
-            SupplementInteractionCheckRequest(
-                medicationProductCode = medicationProductCode,
-                supplementStatementNo = supplementStatementNo,
+        newMedicationProductCode: String,
+        existingMedicationProductCodes: List<String>,
+    ): Result<DrugInteractionBatchResponse> = try {
+        Result.success(
+            api.checkDrugInteractions(
+                DrugInteractionBatchRequest(
+                    newMedicationProductCode = newMedicationProductCode.trim(),
+                    existingMedicationProductCodes = existingMedicationProductCodes.map(String::trim).distinct(),
+                ),
             ),
         )
-    }
-
-    suspend fun searchSupplements(query: String): Result<SupplementProductSearchResponse> = remoteCall {
-        api.searchSupplementProducts(SupplementProductSearchRequest(query.trim()))
-    }
-
-    suspend fun searchDrugs(query: String): Result<DrugProductSearchResponse> = remoteCall {
-        api.searchDrugProducts(DrugProductSearchRequest(query.trim()))
-    }
-
-    private suspend fun <T> remoteCall(call: suspend () -> T): Result<T> = try {
-        Result.success(call())
     } catch (error: HttpException) {
         val problem = error.response()?.errorBody()?.string()?.let(::decodeProblem)
         Result.failure(
@@ -58,7 +33,7 @@ class SupplementInteractionRemoteDataSource @Inject constructor(
                 failure = SupplementInteractionTransportFailure.HTTP,
                 problemCode = problem?.code,
                 httpStatus = error.code(),
-                message = problem?.detail?.takeIf(String::isNotBlank) ?: "서버가 요청을 처리하지 못했습니다.",
+                message = problem?.detail?.takeIf(String::isNotBlank) ?: "공식 약물 상호작용 서버가 요청을 처리하지 못했습니다.",
                 cause = error,
             ),
         )
@@ -66,7 +41,7 @@ class SupplementInteractionRemoteDataSource @Inject constructor(
         Result.failure(
             SupplementInteractionRequestException(
                 failure = SupplementInteractionTransportFailure.TIMEOUT,
-                message = "서버 응답 시간이 초과되었습니다.",
+                message = "공식 약물 상호작용 조회 시간이 초과되었습니다.",
                 cause = error,
             ),
         )
@@ -74,7 +49,7 @@ class SupplementInteractionRemoteDataSource @Inject constructor(
         Result.failure(
             SupplementInteractionRequestException(
                 failure = SupplementInteractionTransportFailure.MALFORMED_RESPONSE,
-                message = "서버 응답을 확인할 수 없습니다.",
+                message = "공식 약물 상호작용 응답을 확인할 수 없습니다.",
                 cause = error,
             ),
         )
@@ -82,7 +57,7 @@ class SupplementInteractionRemoteDataSource @Inject constructor(
         Result.failure(
             SupplementInteractionRequestException(
                 failure = SupplementInteractionTransportFailure.NETWORK,
-                message = "서버에 연결할 수 없습니다.",
+                message = "공식 약물 상호작용 서버에 연결할 수 없습니다.",
                 cause = error,
             ),
         )
@@ -92,7 +67,7 @@ class SupplementInteractionRemoteDataSource @Inject constructor(
         Result.failure(
             SupplementInteractionRequestException(
                 failure = SupplementInteractionTransportFailure.MALFORMED_RESPONSE,
-                message = "서버 응답을 확인할 수 없습니다.",
+                message = "공식 약물 상호작용 응답을 처리할 수 없습니다.",
                 cause = error,
             ),
         )

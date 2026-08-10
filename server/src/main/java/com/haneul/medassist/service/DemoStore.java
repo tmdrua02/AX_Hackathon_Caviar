@@ -22,6 +22,7 @@ public class DemoStore {
     private final Map<UUID, Consultation> consultations = new ConcurrentHashMap<>();
     private final Map<UUID, Reminder> reminders = new ConcurrentHashMap<>();
     private final Map<UUID, List<String>> chatPrompts = new ConcurrentHashMap<>();
+    private final Map<UUID, String> chatOfficialContexts = new ConcurrentHashMap<>();
     private final Map<String, Accepted> idempotency = new ConcurrentHashMap<>();
     private final Map<UUID, ObjectStorage.StoredObject> audioObjects = new ConcurrentHashMap<>();
     private final InteractionEngine engine = new InteractionEngine();
@@ -286,13 +287,15 @@ public class DemoStore {
     public ChatSession createChat() {
         UUID id = UUID.randomUUID();
         chatPrompts.put(id, Collections.synchronizedList(new ArrayList<>()));
+        chatOfficialContexts.put(id, "");
         persistence.put("chat", id.toString(), new ChatState(List.of()));
         return new ChatSession(id, Instant.now());
     }
-    public UUID addChatMessage(UUID sessionId, String message) {
+    public UUID addChatMessage(UUID sessionId, String message, String officialContext) {
         List<String> prompts = chatPrompts.get(sessionId);
         if (prompts == null) throw new NoSuchElementException("채팅 세션을 찾을 수 없습니다.");
         prompts.add(message);
+        chatOfficialContexts.put(sessionId, officialContext == null ? "" : officialContext.strip());
         persistence.put("chat", sessionId.toString(), new ChatState(List.copyOf(prompts)));
         return UUID.randomUUID();
     }
@@ -300,6 +303,10 @@ public class DemoStore {
         List<String> prompts = chatPrompts.get(id);
         if (prompts == null || prompts.isEmpty()) throw new NoSuchElementException("질문을 찾을 수 없습니다.");
         return prompts.get(prompts.size() - 1);
+    }
+    public String lastOfficialContext(UUID id) {
+        if (!chatPrompts.containsKey(id)) throw new NoSuchElementException("채팅 세션을 찾을 수 없습니다.");
+        return chatOfficialContexts.getOrDefault(id, "");
     }
 
     public void saveAudio(UUID consultationId, ObjectStorage.StoredObject object) {

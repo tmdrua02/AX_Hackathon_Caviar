@@ -46,6 +46,7 @@ data class AppUiState(
     val draftLoading: Boolean = false,
     val interactionAccepted: Accepted? = null,
     val interaction: LoadState<InteractionCheck> = LoadState.Idle,
+    val drugSearch: LoadState<DrugProductSearchResponse> = LoadState.Idle,
     val supplementSearch: LoadState<SupplementProductSearchResponse> = LoadState.Idle,
     val selectedMedicationProductCode: String? = null,
     val selectedSupplement: SupplementSearchCandidateDto? = null,
@@ -71,6 +72,7 @@ class AppViewModel @Inject constructor(
     val waveform: StateFlow<List<WaveformBar>> = _waveform.asStateFlow()
     private var recorder: PcmAacRecorder? = null
     private var supplementSearchJob: Job? = null
+    private var drugSearchJob: Job? = null
     private var supplementInteractionJob: Job? = null
     private val supplementInteractionStateMachine = SupplementInteractionRequestStateMachine()
     private val amplitudeProcessor = AmplitudeProcessor()
@@ -135,6 +137,25 @@ class AppViewModel @Inject constructor(
     }
 
     fun updateDraft(draft: PrescriptionDraft) = _state.update { it.copy(draft = draft) }
+
+    fun searchDrugProducts(query: String) {
+        val normalized = query.trim()
+        if (normalized.length < 2 || drugSearchJob?.isActive == true) return
+        drugSearchJob = viewModelScope.launch {
+            _state.update { it.copy(drugSearch = LoadState.Loading) }
+            repository.searchDrugProducts(normalized)
+                .onSuccess { response ->
+                    _state.update {
+                        it.copy(drugSearch = if (response.candidates.isEmpty()) LoadState.Empty else LoadState.Content(response))
+                    }
+                }
+                .onFailure { error ->
+                    _state.update {
+                        it.copy(drugSearch = LoadState.Error(error.message ?: "공식 의약품 검색을 완료하지 못했습니다."))
+                    }
+                }
+        }
+    }
 
     fun confirmDraft(onConfirmed: () -> Unit) = viewModelScope.launch {
         val draft = _state.value.draft ?: return@launch
@@ -227,7 +248,7 @@ class AppViewModel @Inject constructor(
         val existing = _state.value.medications.filter { it.id in _state.value.selectedExisting }
         if (existing.isEmpty()) return@launch
         _state.update { it.copy(interaction = LoadState.Loading) }
-        val accepted = repository.createCheck(added, existing)
+        val accepted = repository.createCheck()
         savedState["checkId"] = accepted.resourceId
         savedState["jobId"] = accepted.jobId
         _state.update { it.copy(interactionAccepted = accepted) }
@@ -236,16 +257,18 @@ class AppViewModel @Inject constructor(
 
     fun finishAnalysis(onSuccess: () -> Unit) = viewModelScope.launch {
         delay(1_200)
-        val accepted = _state.value.interactionAccepted ?: return@launch
+        _state.value.interactionAccepted ?: return@launch
         val added = _state.value.newMedication ?: return@launch
         val existing = _state.value.medications.filter { it.id in _state.value.selectedExisting }
-        runCatching { repository.check(accepted, added, existing) }
+        runCatching { repository.check(added, existing) }
             .onSuccess {
                 _state.update { state -> state.copy(interaction = LoadState.Content(it)) }
                 onSuccess()
             }
-            .onFailure {
-                _state.update { state -> state.copy(interaction = LoadState.Error("분석 상태를 불러오지 못했습니다.")) }
+            .onFailure { error ->
+                _state.update { state ->
+                    state.copy(interaction = LoadState.Error(error.message ?: "공식 성분·DUR 분석을 완료하지 못했습니다."))
+                }
             }
     }
 
@@ -475,9 +498,12 @@ class AppViewModel @Inject constructor(
 
     fun sendChat(message: String) = viewModelScope.launch {
         if (message.isBlank()) return@launch
+        val officialContext = InteractionChatContextFormatter.format(
+            (_state.value.interaction as? LoadState.Content)?.value,
+        )
         val assistantIndex = _state.value.chatMessages.size + 1
         _state.update { it.copy(chatMessages = it.chatMessages + (true to message) + (false to ""), chatLoading = true) }
-        repository.chat(message) { delta ->
+        repository.chat(message, officialContext) { delta ->
             _state.update { state ->
                 val messages = state.chatMessages.toMutableList()
                 val old = messages.getOrNull(assistantIndex)?.second.orEmpty()
@@ -492,6 +518,7 @@ class AppViewModel @Inject constructor(
 
     override fun onCleared() {
         supplementSearchJob?.cancel()
+        drugSearchJob?.cancel()
         supplementInteractionJob?.cancel()
         recorder?.stop()
         super.onCleared()
