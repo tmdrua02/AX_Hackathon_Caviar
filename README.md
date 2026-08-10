@@ -84,7 +84,7 @@ Intel Mac은 `arm64-v8a` 대신 설치 가능한 `x86_64` 이미지를 선택하
 ### 1.3 저장소 받기
 
 ```bash
-git clone --branch Design/UIDevelop \
+git clone --branch main \
   https://github.com/tmdrua02/AX_Hackathon_Caviar.git
 cd AX_Hackathon_Caviar
 ```
@@ -94,6 +94,319 @@ Wrapper 실행 권한이 없다면 한 번만 설정합니다.
 ```bash
 chmod +x gradlew backend/gradlew
 ```
+
+### 1.4 Windows 10/11 클린 설치와 실행
+
+Windows에서는 **64비트 Windows 10 이상**, PowerShell, BIOS의 Intel VT-x 또는 AMD-V 가상화 기능을 권장합니다. Android Emulator가 포함된 공식 시스템 요구사항과 설치 방법은 [Android Studio Windows 설치 안내](https://developer.android.com/studio/install)를 참고하세요.
+
+#### 기본 도구와 JDK 설치
+
+PowerShell을 관리자 권한으로 열고 Git, JDK 17, JDK 21, Android Studio를 설치합니다.
+
+```powershell
+winget install --id Git.Git -e
+winget install --id EclipseAdoptium.Temurin.17.JDK -e
+winget install --id EclipseAdoptium.Temurin.21.JDK -e
+winget install --id Google.AndroidStudio -e
+```
+
+설치가 끝나면 PowerShell을 다시 열고 JDK 경로를 확인합니다.
+
+```powershell
+git --version
+Get-ChildItem "C:\Program Files\Eclipse Adoptium" -Directory
+
+$JDK17_HOME = (
+    Get-ChildItem "C:\Program Files\Eclipse Adoptium" -Directory |
+    Where-Object { $_.Name -like "jdk-17*" } |
+    Select-Object -First 1
+).FullName
+
+$JDK21_HOME = (
+    Get-ChildItem "C:\Program Files\Eclipse Adoptium" -Directory |
+    Where-Object { $_.Name -like "jdk-21*" } |
+    Select-Object -First 1
+).FullName
+
+Write-Host "JDK 17: $JDK17_HOME"
+Write-Host "JDK 21: $JDK21_HOME"
+```
+
+Android 앱과 `backend`는 JDK 17, `server`는 JDK 21을 사용합니다. 위의 `$JDK17_HOME`, `$JDK21_HOME` 변수는 새 PowerShell을 열 때 다시 설정해야 합니다.
+
+#### Android SDK와 AVD 설치
+
+Android Studio의 `Settings > Languages & Frameworks > Android SDK`에서 다음 항목을 설치합니다.
+
+- Android SDK Platform 35
+- Android SDK Build-Tools 35.x
+- Android SDK Platform-Tools
+- Android Emulator
+- Android SDK Command-line Tools (latest)
+- Google APIs x86_64 System Image(API 35)
+
+PowerShell에서 Android SDK 경로를 현재 세션에 등록합니다. Android 공식 문서에서는 SDK 설치 경로 환경변수로 [`ANDROID_HOME`](https://developer.android.com/tools/variables)을 권장합니다.
+
+```powershell
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+$env:Path = "$env:ANDROID_HOME\platform-tools;$env:ANDROID_HOME\emulator;$env:ANDROID_HOME\cmdline-tools\latest\bin;$env:Path"
+
+sdkmanager.bat --licenses
+adb version
+emulator -version
+```
+
+CLI로 필요한 패키지와 AVD를 설치하려면 다음 명령을 실행합니다.
+
+```powershell
+sdkmanager.bat `
+  "platform-tools" `
+  "emulator" `
+  "platforms;android-35" `
+  "build-tools;35.0.0" `
+  "system-images;android-35;google_apis;x86_64"
+
+"no" | avdmanager.bat create avd `
+  --name MediMate_API_35 `
+  --package "system-images;android-35;google_apis;x86_64" `
+  --device "pixel_7"
+
+emulator -list-avds
+```
+
+Android Studio의 `View > Tool Windows > Device Manager`에서 AVD를 만들어도 됩니다.
+
+#### 저장소와 환경설정 준비
+
+```powershell
+git clone --branch main `
+  https://github.com/tmdrua02/AX_Hackathon_Caviar.git
+
+Set-Location AX_Hackathon_Caviar
+Copy-Item .env.example .env
+notepad .env
+```
+
+`.env`에는 2절의 OpenAI 키, 공공데이터 키와 필요한 서버 설정을 입력합니다. `.env`와 `local.properties`는 절대 커밋하지 마세요.
+
+#### Windows 로컬 서버 실행
+
+PowerShell 1에서 진료 녹음·메디봇 서버를 실행합니다.
+
+```powershell
+Set-Location "C:\프로젝트경로\AX_Hackathon_Caviar"
+
+$JDK21_HOME = (
+    Get-ChildItem "C:\Program Files\Eclipse Adoptium" -Directory |
+    Where-Object { $_.Name -like "jdk-21*" } |
+    Select-Object -First 1
+).FullName
+$env:JAVA_HOME = $JDK21_HOME
+$env:Path = "$env:JAVA_HOME\bin;$env:Path"
+$env:GRADLE_USER_HOME = "$PWD\.gradle-user-home"
+
+.\gradlew.bat :server:bootRun
+```
+
+PowerShell 2에서 의약품·건강기능식품 서버를 실행합니다.
+
+```powershell
+Set-Location "C:\프로젝트경로\AX_Hackathon_Caviar\backend"
+
+$JDK17_HOME = (
+    Get-ChildItem "C:\Program Files\Eclipse Adoptium" -Directory |
+    Where-Object { $_.Name -like "jdk-17*" } |
+    Select-Object -First 1
+).FullName
+$env:JAVA_HOME = $JDK17_HOME
+$env:Path = "$env:JAVA_HOME\bin;$env:Path"
+$env:GRADLE_USER_HOME = "$(Split-Path $PWD -Parent)\.gradle-user-home"
+
+.\gradlew.bat bootRun
+```
+
+PowerShell 3에서 두 서버의 상태를 확인합니다.
+
+```powershell
+Invoke-RestMethod http://localhost:8080/actuator/health
+Invoke-RestMethod http://localhost:8081/health
+```
+
+#### Windows 에뮬레이터 실행과 APK 설치
+
+```powershell
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+$env:Path = "$env:ANDROID_HOME\platform-tools;$env:ANDROID_HOME\emulator;$env:Path"
+
+emulator -avd MediMate_API_35 `
+  -no-snapshot-load `
+  -gpu auto `
+  -allow-host-audio
+```
+
+다른 PowerShell에서 부팅과 호스트 마이크를 확인합니다.
+
+```powershell
+adb wait-for-device
+adb emu avd hostmicon
+adb devices
+```
+
+마이크가 입력되지 않으면 `Windows 설정 > 개인정보 및 보안 > 마이크`에서 데스크톱 앱, Android Studio와 Android Emulator의 접근을 허용합니다.
+
+JDK 17로 Android 테스트와 Debug APK 빌드를 실행합니다.
+
+```powershell
+Set-Location "C:\프로젝트경로\AX_Hackathon_Caviar"
+
+$JDK17_HOME = (
+    Get-ChildItem "C:\Program Files\Eclipse Adoptium" -Directory |
+    Where-Object { $_.Name -like "jdk-17*" } |
+    Select-Object -First 1
+).FullName
+$env:JAVA_HOME = $JDK17_HOME
+$env:Path = "$env:JAVA_HOME\bin;$env:Path"
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+$env:Path = "$env:ANDROID_HOME\platform-tools;$env:Path"
+$env:GRADLE_USER_HOME = "$PWD\.gradle-user-home"
+
+.\gradlew.bat :android:app:testDebugUnitTest
+.\gradlew.bat :android:app:assembleDebug
+
+adb install -r android\app\build\outputs\apk\debug\app-debug.apk
+adb shell am force-stop com.haneul.medassist
+adb shell monkey -p com.haneul.medassist `
+  -c android.intent.category.LAUNCHER 1
+```
+
+#### Windows에서 외부 GCE 서버용 APK 빌드
+
+`SERVER_URL` 마지막에는 반드시 `/`를 포함해야 합니다. 토큰은 README나 PowerShell 스크립트에 저장하지 않고 현재 세션에서만 입력합니다.
+
+```powershell
+Set-Location "C:\프로젝트경로\AX_Hackathon_Caviar"
+
+$JDK17_HOME = (
+    Get-ChildItem "C:\Program Files\Eclipse Adoptium" -Directory |
+    Where-Object { $_.Name -like "jdk-17*" } |
+    Select-Object -First 1
+).FullName
+$env:JAVA_HOME = $JDK17_HOME
+$env:Path = "$env:JAVA_HOME\bin;$env:Path"
+$env:GRADLE_USER_HOME = "$PWD\.gradle-user-home"
+
+$env:SERVER_URL = "http://YOUR_GCE_EXTERNAL_IP/"
+$secureToken = Read-Host "Demo API token" -AsSecureString
+$env:MEDIMATE_DEMO_TOKEN = [System.Net.NetworkCredential]::new("", $secureToken).Password
+
+.\gradlew.bat :android:app:assembleDebug `
+  "-PDEBUG_API_BASE_URL=$env:SERVER_URL" `
+  "-PDEBUG_SUPPLEMENT_API_BASE_URL=$env:SERVER_URL" `
+  "-PDEBUG_DEMO_API_TOKEN=$env:MEDIMATE_DEMO_TOKEN"
+
+Remove-Item Env:MEDIMATE_DEMO_TOKEN
+Remove-Variable secureToken
+```
+
+생성 위치는 `android\app\build\outputs\apk\debug\app-debug.apk`입니다.
+
+#### Windows 서버 테스트와 JAR 빌드
+
+진료 녹음·메디봇 서버는 JDK 21로 빌드합니다.
+
+```powershell
+Set-Location "C:\프로젝트경로\AX_Hackathon_Caviar"
+$JDK21_HOME = (
+    Get-ChildItem "C:\Program Files\Eclipse Adoptium" -Directory |
+    Where-Object { $_.Name -like "jdk-21*" } |
+    Select-Object -First 1
+).FullName
+$env:JAVA_HOME = $JDK21_HOME
+$env:Path = "$env:JAVA_HOME\bin;$env:Path"
+$env:GRADLE_USER_HOME = "$PWD\.gradle-user-home"
+
+.\gradlew.bat :server:test
+.\gradlew.bat :server:bootJar
+```
+
+공공데이터 백엔드는 JDK 17로 빌드합니다.
+
+```powershell
+Set-Location "C:\프로젝트경로\AX_Hackathon_Caviar\backend"
+$JDK17_HOME = (
+    Get-ChildItem "C:\Program Files\Eclipse Adoptium" -Directory |
+    Where-Object { $_.Name -like "jdk-17*" } |
+    Select-Object -First 1
+).FullName
+$env:JAVA_HOME = $JDK17_HOME
+$env:Path = "$env:JAVA_HOME\bin;$env:Path"
+$env:GRADLE_USER_HOME = "$(Split-Path $PWD -Parent)\.gradle-user-home"
+
+.\gradlew.bat test
+.\gradlew.bat bootJar
+```
+
+JAR 생성 위치는 각각 `server\build\libs\`, `backend\build\libs\`입니다.
+
+#### Windows Docker Desktop 실행
+
+관리자 PowerShell에서 WSL 2와 Docker Desktop을 설치합니다.
+
+```powershell
+wsl --install
+winget install --id Docker.DockerDesktop -e
+```
+
+Windows를 재시작하고 Docker Desktop을 실행한 뒤 확인합니다.
+
+```powershell
+docker version
+docker compose version
+```
+
+저장소 루트에서 Compose 설정을 검증하고 서버를 실행합니다.
+
+```powershell
+docker compose -f compose.prod.yml --env-file .env config --quiet
+docker compose -f compose.prod.yml --env-file .env build
+docker compose -f compose.prod.yml --env-file .env up -d
+docker compose -f compose.prod.yml --env-file .env ps
+```
+
+로그와 종료 명령:
+
+```powershell
+docker compose -f compose.prod.yml --env-file .env logs -f --tail=200
+docker compose -f compose.prod.yml --env-file .env down
+```
+
+`down`은 데이터 볼륨을 삭제하지 않습니다. 데이터 보존이 필요하면 `down -v`는 사용하지 마세요.
+
+#### Windows 문제 해결
+
+`adb`를 찾지 못하면 SDK 경로를 다시 등록합니다.
+
+```powershell
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+$env:Path = "$env:ANDROID_HOME\platform-tools;$env:Path"
+adb devices
+```
+
+에뮬레이터 가속 상태는 다음 명령으로 확인합니다.
+
+```powershell
+emulator -accel-check
+```
+
+로컬 또는 GCE 서버 포트 연결은 다음과 같이 확인합니다.
+
+```powershell
+Test-NetConnection localhost -Port 8080
+Test-NetConnection localhost -Port 8081
+Test-NetConnection YOUR_GCE_EXTERNAL_IP -Port 80
+```
+
+Android Emulator에서 Windows 호스트의 서버에 접근할 때는 `localhost` 대신 `10.0.2.2`를 사용합니다.
 
 ## 2. 환경변수 설정
 
@@ -352,7 +665,7 @@ docker compose version
 ### 7.2 소스와 환경변수 준비
 
 ```bash
-git clone --branch Design/UIDevelop \
+git clone --branch main \
   https://github.com/tmdrua02/AX_Hackathon_Caviar.git
 cd AX_Hackathon_Caviar
 cp .env.example .env
