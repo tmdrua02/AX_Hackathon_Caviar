@@ -3,6 +3,7 @@ package com.haneul.medassist.data
 import android.content.ContentResolver
 import android.net.Uri
 import com.haneul.medassist.BuildConfig
+import com.haneul.medassist.di.MainHttpClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -24,8 +25,10 @@ import javax.inject.Singleton
 class MedAssistRepository @Inject constructor(
     private val api: ApiService,
     private val database: MedAssistDatabase,
-    private val client: OkHttpClient,
+    @MainHttpClient private val client: OkHttpClient,
     private val json: Json,
+    private val supplementInteractionRemoteDataSource: SupplementInteractionRemoteDataSource,
+    private val drugInteractionRemoteDataSource: DrugInteractionRemoteDataSource,
 ) {
     suspend fun home(): LoadState<HomeResponse> = try {
         val remote = api.home()
@@ -55,6 +58,18 @@ class MedAssistRepository @Inject constructor(
                 if (taken) Instant.now().toString() else null, medication.version),
         )
     }
+
+    suspend fun searchSupplementProducts(query: String): Result<SupplementProductSearchResponse> =
+        supplementInteractionRemoteDataSource.searchSupplements(query)
+
+    suspend fun searchDrugProducts(query: String): Result<DrugProductSearchResponse> =
+        supplementInteractionRemoteDataSource.searchDrugs(query)
+
+    suspend fun checkSupplementInteraction(
+        medicationProductCode: String,
+        supplementStatementNo: String,
+    ): Result<SupplementInteractionCheckResponse> =
+        supplementInteractionRemoteDataSource.check(medicationProductCode, supplementStatementNo)
 
     suspend fun createDraft(front: Uri, back: Uri, resolver: ContentResolver, ocrText: String): PrescriptionDraft =
         runCatching {
@@ -88,16 +103,25 @@ class MedAssistRepository @Inject constructor(
         )
     }
 
-    suspend fun createCheck(added: Medication, existing: List<Medication>): Accepted = runCatching {
-        api.createCheck(UUID.randomUUID().toString(), InteractionRequest(added.id, existing.map { it.id }))
-    }.getOrElse { Accepted("local-check", "local-job", "SUCCEEDED") }
+    suspend fun createCheck(): Accepted =
+        Accepted(UUID.randomUUID().toString(), UUID.randomUUID().toString(), "QUEUED")
 
-    suspend fun check(accepted: Accepted, added: Medication, existing: List<Medication>): InteractionCheck = runCatching {
-        api.check(accepted.resourceId)
-    }.getOrElse { localCheck(added, existing) }
+    suspend fun check(added: Medication, existing: List<Medication>): InteractionCheck {
+        val addedCode = added.productCode?.trim().orEmpty()
+        require(addedCode.isNotBlank()) {
+            "새로 추가한 약의 공식 품목기준코드가 없어 성분·DUR 분석을 시작할 수 없습니다."
+        }
+        val officialExistingCodes = existing
+            .filter { it.productType != ProductType.HEALTH_SUPPLEMENT }
+            .mapNotNull { it.productCode?.trim()?.takeIf(String::isNotBlank) }
+            .distinct()
+        val response = if (officialExistingCodes.isEmpty()) null else {
+            drugInteractionRemoteDataSource.check(addedCode, officialExistingCodes).getOrThrow()
+        }
+        return DrugInteractionUiMapper.map(response, added, existing)
+    }
 
-    suspend fun saveCheck(check: InteractionCheck): InteractionCheck = runCatching { api.saveCheck(check.id) }
-        .getOrElse { check.copy(saved = true) }
+    suspend fun saveCheck(check: InteractionCheck): InteractionCheck = check.copy(saved = true)
 
     suspend fun consultations(): Result<List<Consultation>> = runCatching { api.consultations() }
 
@@ -114,10 +138,10 @@ class MedAssistRepository @Inject constructor(
 
     suspend fun retryConsultation(id: String): Result<Accepted> = runCatching { api.retryConsultation(id) }
 
-    suspend fun chat(message: String, onDelta: (String) -> Unit) = withContext(Dispatchers.IO) {
+    suspend fun chat(message: String, officialContext: String?, onDelta: (String) -> Unit) = withContext(Dispatchers.IO) {
         try {
             val session = api.createChat()
-            val accepted = api.sendMessage(session.id, ChatMessageRequest(message))
+            val accepted = api.sendMessage(session.id, ChatMessageRequest(message, officialContext))
             val request = Request.Builder().url(BuildConfig.API_BASE_URL.removeSuffix("/") + accepted.streamUrl).build()
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) error("채팅 서버 오류")
@@ -147,28 +171,6 @@ class MedAssistRepository @Inject constructor(
     private fun Medication.toCache() = CachedMedication(id, name, productType.name, dose, time, timing, taken, version)
     private fun CachedMedication.toMedication() = Medication(id, name, ProductType.valueOf(productType),
         dose = dose, time = time, timing = timing, taken = taken, version = version)
-
-    private fun localCheck(added: Medication, existing: List<Medication>): InteractionCheck {
-        val results = existing.map { current ->
-            val duplicate = added.ingredients.any { a -> current.ingredients.any { b -> a.normalizedName == b.normalizedName } }
-            val severity = if (duplicate) Severity.DUPLICATE_OR_SIMILAR else Severity.UNKNOWN
-            InteractionResult(
-                UUID.randomUUID().toString(), added, current, severity,
-                if (duplicate) "동일 성분 또는 유사 효능 가능성" else "확인 불가 · 전문가 확인 필요",
-                if (duplicate) "두 제품의 표준화 성분명이 같습니다. 복용 전 전문가에게 확인하세요."
-                else "공신력 데이터로 충분히 확인하지 못했습니다. 안전하다는 의미가 아닙니다.",
-                if (duplicate) listOf(Evidence(
-                    added.ingredients.first().displayName, current.ingredients.first().displayName,
-                    "SAME_INGREDIENT", "식품의약품안전처 의약품 제품 허가정보",
-                    "https://www.data.go.kr/data/15095677/openapi.do", "MOCK-SAME-001", "2026-07-01",
-                    Instant.now().toString(), "두 제품에서 같은 표준화 성분명이 확인됨", "PUBLIC_DATA",
-                )) else emptyList(),
-            )
-        }
-        return InteractionCheck("local-check", "local-job", "SUCCEEDED", results,
-            Coverage(added.ingredients.size + existing.sumOf { it.ingredients.size }, 0, 0, false), false,
-            "정보 제공용이며 복용 변경 전 의사·약사와 상담하세요.")
-    }
 
     private fun demoConsultation(): Consultation {
         val first = TranscriptSegment("segment-1", "의사", 0, 8200, "어디가 가장 불편해서 오셨어요?")

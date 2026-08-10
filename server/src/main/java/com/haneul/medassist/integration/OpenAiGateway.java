@@ -33,6 +33,9 @@ public class OpenAiGateway {
             사용자가 할 일 순서로 짧고 명확하게 작성한다. OCR 또는 사용자 입력이 불확실하면 제품명과 성분
             확인을 먼저 요청한다. 심각한 증상이나 응급 신호가 언급되면 즉시 119 또는 가까운 응급실 등
             지역 응급 도움을 받도록 안내한다. 모든 의료 의사결정은 담당 의사·약사와 확인하도록 한다.
+            NO_KNOWN_ISSUE 또는 공식 상호작용 미발견은 조회된 데이터 범위의 결과일 뿐 안전 보증이 아니다.
+            이 경우에도 '함께 복용해도 된다', '안전하다', '문제없다'고 표현하지 말고, 조회 범위 내 알려진
+            상호작용이 확인되지 않았다고만 설명한 뒤 개인 상태와 다른 약을 포함해 의사·약사에게 확인하도록 한다.
             """;
 
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
@@ -61,6 +64,41 @@ public class OpenAiGateway {
 
     public boolean isConfigured() {
         return apiKey != null && !apiKey.isBlank();
+    }
+
+    public MedicationQueryExtraction extractMedicationQueries(String userMessage) {
+        var schema = mapper.createObjectNode();
+        schema.put("type", "object");
+        schema.put("additionalProperties", false);
+        schema.putArray("required").add("interactionQuestion").add("medicationQueries").add("ambiguousTerms");
+        var properties = schema.putObject("properties");
+        properties.putObject("interactionQuestion").put("type", "boolean");
+        properties.putObject("medicationQueries").put("type", "array")
+                .set("items", mapper.createObjectNode().put("type", "string"));
+        properties.putObject("ambiguousTerms").put("type", "array")
+                .set("items", mapper.createObjectNode().put("type", "string"));
+
+        String instructions = """
+                사용자의 한국어 복약 질문에서 실제로 언급된 의약품 제품명 또는 성분명과 함량만 추출한다.
+                함께 복용, 병용, 상호작용, 같이 먹어도 되는지 묻는 질문이면 interactionQuestion을 true로 한다.
+                medicationQueries에는 공공 의약품 검색에 사용할 수 있는 명칭을 사용자가 말한 그대로 넣고,
+                해열제·감기약·진통제처럼 특정 제품이나 성분을 확정할 수 없는 표현은 ambiguousTerms에 넣는다.
+                제품명 뒤 괄호에 적힌 성분은 그 제품의 설명이므로 별도 의약품으로 추가하지 않는다.
+                예를 들어 '타이레놀정500밀리그람(아세트아미노펜)과 부루펜정200밀리그램(이부프로펜)'은
+                medicationQueries 두 개만 반환한다.
+                사용자가 말하지 않은 제품명이나 성분을 추측하거나 보충하지 않는다. 중복은 제거한다.
+                """;
+        JsonNode result = structuredResponse(
+                chatModel,
+                "medication_query_extraction",
+                instructions,
+                "[사용자 질문]\n" + userMessage,
+                schema);
+        var stringListType = mapper.getTypeFactory().constructCollectionType(java.util.List.class, String.class);
+        return new MedicationQueryExtraction(
+                result.path("interactionQuestion").asBoolean(false),
+                mapper.convertValue(result.path("medicationQueries"), stringListType),
+                mapper.convertValue(result.path("ambiguousTerms"), stringListType));
     }
 
     public void streamChat(UUID userId, String officialContext, String userMessage, Consumer<String> delta) {
@@ -178,13 +216,14 @@ public class OpenAiGateway {
                 진단과 처방은 의료진이 실제로 말한 내용만 기록한다. evidenceIndexes는 dialogue의 0부터 시작하는
                 인덱스만 사용한다. 모든 결과는 한국어로 작성한다.
                 """;
-        return structuredResponse("consultation_record", instructions, "[진료 전사문]\n" + transcript, schema);
+        return structuredResponse(summaryModel, "consultation_record", instructions,
+                "[진료 전사문]\n" + transcript, schema);
     }
 
-    private JsonNode structuredResponse(String name, String instructions, String input, JsonNode schema) {
+    private JsonNode structuredResponse(String model, String name, String instructions, String input, JsonNode schema) {
         try {
             var payload = mapper.createObjectNode();
-            payload.put("model", summaryModel);
+            payload.put("model", model);
             payload.put("store", false);
             payload.put("instructions", instructions);
             payload.put("input", input);
@@ -245,4 +284,8 @@ public class OpenAiGateway {
         public ProviderException(String code, boolean retryable) { super(code); this.retryable = retryable; }
         public boolean retryable() { return retryable; }
     }
+
+    public record MedicationQueryExtraction(boolean interactionQuestion,
+                                            java.util.List<String> medicationQueries,
+                                            java.util.List<String> ambiguousTerms) {}
 }

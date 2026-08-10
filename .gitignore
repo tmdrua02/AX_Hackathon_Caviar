@@ -5,6 +5,7 @@
 **/bin/
 /tmp/
 **/uploads/
+backups/
 
 *.apk
 *.aab
@@ -16,3 +17,6 @@ local.properties
 *.env
 .env
 server/.env
+backend/.env
+**/application-local.yml
+**/application-local.properties

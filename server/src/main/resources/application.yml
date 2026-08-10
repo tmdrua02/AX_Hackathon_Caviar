@@ -3,12 +3,14 @@ spring:
     import: optional:file:.env[.properties],optional:file:../.env[.properties],optional:file:server/.env[.properties]
   application:
     name: med-assist-server
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
   profiles:
     default: mock
   servlet:
     multipart:
-      max-file-size: 30MB
-      max-request-size: 32MB
+      max-file-size: ${UPLOAD_MAX_FILE_SIZE:30MB}
+      max-request-size: ${UPLOAD_MAX_REQUEST_SIZE:32MB}
   jpa:
     open-in-view: false
     hibernate:
@@ -16,14 +18,22 @@ spring:
   flyway:
     enabled: true
 server:
-  port: 8080
+  port: ${SERVER_PORT:8080}
+  shutdown: graceful
   error:
     include-message: never
+    include-stacktrace: never
+    include-binding-errors: never
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
 logging:
   level:
     org.springframework.web: INFO
@@ -34,6 +44,14 @@ springdoc:
     path: /swagger-ui.html
 app:
   storage-root: ${MEDASSIST_STORAGE_ROOT:./server/uploads}
+  backend:
+    base-url: ${BACKEND_BASE_URL:http://localhost:8081}
+  processing:
+    core-pool-size: ${AI_CORE_POOL_SIZE:1}
+    max-pool-size: ${AI_MAX_POOL_SIZE:2}
+    queue-capacity: ${AI_QUEUE_CAPACITY:8}
+    max-attempts: ${AI_MAX_ATTEMPTS:2}
+    retry-backoff-ms: ${AI_RETRY_BACKOFF_MS:1000}
   openai:
     api-key: ${OPENAI_API_KEY:}
     chat-model: ${OPENAI_CHAT_MODEL:gpt-4o-mini}
@@ -58,7 +76,7 @@ spring:
 spring:
   config:
     activate:
-      on-profile: local,prod
+      on-profile: local
   datasource:
     url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/medassist}
     username: ${DATABASE_USERNAME:medassist}

@@ -7,6 +7,22 @@ plugins {
     alias(libs.plugins.hilt)
 }
 
+fun String.asBuildConfigString(): String = "\"" + replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+fun String.asBaseUrl(): String = trim().let { if (it.endsWith('/')) it else "$it/" }
+
+val debugApiBaseUrl = providers.gradleProperty("DEBUG_API_BASE_URL")
+    .orElse("http://10.0.2.2:8080/").get().asBaseUrl()
+val debugSupplementApiBaseUrl = providers.gradleProperty("DEBUG_SUPPLEMENT_API_BASE_URL")
+    .orElse("http://10.0.2.2:8081/").get().asBaseUrl()
+val releaseApiBaseUrl = providers.gradleProperty("RELEASE_API_BASE_URL")
+    .orElse("https://example.invalid/").get().asBaseUrl()
+val releaseSupplementApiBaseUrl = providers.gradleProperty("RELEASE_SUPPLEMENT_API_BASE_URL")
+    .orElse(releaseApiBaseUrl).get().asBaseUrl()
+
+require(releaseApiBaseUrl.startsWith("https://") && releaseSupplementApiBaseUrl.startsWith("https://")) {
+    "Release API URLs must use HTTPS. Set RELEASE_API_BASE_URL and RELEASE_SUPPLEMENT_API_BASE_URL."
+}
+
 android {
     namespace = "com.haneul.medassist"
     compileSdk = 35
@@ -19,12 +35,23 @@ android {
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
-        buildConfigField("String", "API_BASE_URL", "\"http://10.0.2.2:8080/\"")
+        manifestPlaceholders["usesCleartextTraffic"] = "false"
     }
 
     buildTypes {
+        debug {
+            manifestPlaceholders["usesCleartextTraffic"] = "true"
+            buildConfigField("String", "API_BASE_URL", debugApiBaseUrl.asBuildConfigString())
+            buildConfigField("String", "SUPPLEMENT_API_BASE_URL", debugSupplementApiBaseUrl.asBuildConfigString())
+            buildConfigField("String", "DEMO_API_TOKEN", providers.gradleProperty("DEBUG_DEMO_API_TOKEN")
+                .orElse("").get().asBuildConfigString())
+        }
         release {
             isMinifyEnabled = true
+            buildConfigField("String", "API_BASE_URL", releaseApiBaseUrl.asBuildConfigString())
+            buildConfigField("String", "SUPPLEMENT_API_BASE_URL", releaseSupplementApiBaseUrl.asBuildConfigString())
+            buildConfigField("String", "DEMO_API_TOKEN", providers.gradleProperty("RELEASE_DEMO_API_TOKEN")
+                .orElse("").get().asBuildConfigString())
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
@@ -59,6 +86,7 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     testImplementation(libs.junit4)
+    testImplementation(libs.mockwebserver)
     androidTestImplementation(libs.androidx.test.ext)
     androidTestImplementation(libs.androidx.test.runner)
 

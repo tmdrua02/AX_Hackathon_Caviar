@@ -6,6 +6,7 @@ import com.haneul.medassist.service.ConsultationProcessingService;
 import com.haneul.medassist.service.DemoStore;
 import jakarta.validation.Valid;
 import org.springframework.http.*;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -16,6 +17,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
 
 @RestController
 @RequestMapping("/api/v1")
@@ -23,11 +26,14 @@ public class ApiController {
     private final DemoStore store;
     private final ChatSafetyService chat;
     private final ConsultationProcessingService consultations;
+    private final Executor chatExecutor;
 
-    public ApiController(DemoStore store, ChatSafetyService chat, ConsultationProcessingService consultations) {
+    public ApiController(DemoStore store, ChatSafetyService chat, ConsultationProcessingService consultations,
+                         @Qualifier("chatExecutor") Executor chatExecutor) {
         this.store = store;
         this.chat = chat;
         this.consultations = consultations;
+        this.chatExecutor = chatExecutor;
     }
 
     @GetMapping("/home")
@@ -102,13 +108,19 @@ public class ApiController {
 
     @PostMapping(value = "/consultations", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     ResponseEntity<Accepted> createConsultation(@RequestPart MultipartFile audio,
+                                                @RequestHeader(name = "Idempotency-Key", required = false) String key,
                                                 @RequestPart String title,
                                                 @RequestPart(required = false) String hospitalName,
                                                 @RequestPart String consultedAt,
                                                 @RequestPart String durationMs) throws IOException {
         validateAudio(audio);
-        return ResponseEntity.status(HttpStatus.ACCEPTED).body(consultations.create(audio, title, hospitalName,
-                Instant.parse(consultedAt), Long.parseLong(durationMs)));
+        if (title.isBlank() || title.length() > 120) throw new IllegalArgumentException("진료 기록 제목을 확인해 주세요.");
+        long parsedDuration = Long.parseLong(durationMs);
+        if (parsedDuration <= 0 || parsedDuration > 12 * 60 * 60 * 1000L) {
+            throw new IllegalArgumentException("녹음 길이를 확인해 주세요.");
+        }
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(consultations.create(audio, key, title, hospitalName,
+                Instant.parse(consultedAt), parsedDuration));
     }
 
     @GetMapping("/consultations/{id}")
@@ -152,24 +164,29 @@ public class ApiController {
     @PostMapping("/chat/sessions/{id}/messages")
     ResponseEntity<ChatMessageAccepted> chatMessage(@PathVariable UUID id,
                                                     @Valid @RequestBody ChatMessageRequest request) {
-        UUID message = store.addChatMessage(id, request.message());
+        UUID message = store.addChatMessage(id, request.message(), request.officialContext());
         return ResponseEntity.accepted().body(new ChatMessageAccepted(message, "/api/v1/chat/sessions/" + id + "/stream"));
     }
 
     @GetMapping(value = "/chat/sessions/{id}/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     SseEmitter stream(@PathVariable UUID id) {
         String prompt = store.lastPrompt(id);
-        SseEmitter emitter = new SseEmitter(30_000L);
-        CompletableFuture.runAsync(() -> {
-            try {
-                chat.stream(DemoStore.DEMO_USER, prompt, part -> {
-                    try { emitter.send(SseEmitter.event().name("delta").data(Map.of("text", part))); }
-                    catch (IOException exception) { throw new RuntimeException(exception); }
-                });
-                emitter.send(SseEmitter.event().name("done").data(Map.of("status", "completed")));
-                emitter.complete();
-            } catch (IOException e) { emitter.completeWithError(e); }
-        });
+        String officialContext = store.lastOfficialContext(id);
+        SseEmitter emitter = new SseEmitter(120_000L);
+        try {
+            CompletableFuture.runAsync(() -> {
+                try {
+                    chat.stream(DemoStore.DEMO_USER, officialContext, prompt, part -> {
+                        try { emitter.send(SseEmitter.event().name("delta").data(Map.of("text", part))); }
+                        catch (IOException exception) { throw new RuntimeException(exception); }
+                    });
+                    emitter.send(SseEmitter.event().name("done").data(Map.of("status", "completed")));
+                    emitter.complete();
+                } catch (Exception error) { emitter.completeWithError(error); }
+            }, chatExecutor);
+        } catch (RejectedExecutionException error) {
+            emitter.completeWithError(error);
+        }
         return emitter;
     }
 
@@ -186,7 +203,8 @@ public class ApiController {
     }
     private void validateAudio(MultipartFile file) {
         String type = file.getContentType();
-        if (file.isEmpty() || type == null || !(type.contains("mp4") || type.contains("m4a") || type.contains("aac"))) {
+        if (file.isEmpty() || type == null || !(type.equals("audio/mp4") || type.equals("audio/m4a")
+                || type.equals("audio/x-m4a") || type.equals("audio/aac"))) {
             throw new IllegalArgumentException("M4A/AAC 오디오만 업로드할 수 있습니다.");
         }
     }

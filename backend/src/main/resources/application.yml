@@ -1,0 +1,134 @@
+spring:
+  config:
+    import: optional:file:.env[.properties],optional:file:../.env[.properties],optional:file:backend/.env[.properties]
+  application:
+    name: medassist-backend
+
+server:
+  port: ${SERVER_PORT:8081}
+  error:
+    include-message: never
+    include-stacktrace: never
+
+medassist:
+  public-data:
+    credentials:
+      service-key: ${DATA_GO_KR_SERVICE_KEY:}
+      service-key-encoded: ${DATA_GO_KR_SERVICE_KEY_ENCODED:true}
+    drug-product:
+      base-url: https://apis.data.go.kr/1471000/DrugPrdtPrmsnInfoService07
+      search-operation-path: /getDrugPrdtPrmsnInq07
+      detail-operation-path: /getDrugPrdtPrmsnDtlInq06
+      ingredient-operation-path: /getDrugPrdtMcpnDtlInq07
+      page-size: 20
+      maximum-pages: 50
+      mapping:
+        search-items-json-pointer: ${DRUG_API_SEARCH_ITEMS_JSON_POINTER:/body/items}
+        ingredient-items-json-pointer: ${DRUG_API_INGREDIENT_ITEMS_JSON_POINTER:/body/items}
+        total-count-json-pointer: ${DRUG_API_TOTAL_COUNT_JSON_POINTER:/body/totalCount}
+        page-number-json-pointer: ${DRUG_API_PAGE_NUMBER_JSON_POINTER:/body/pageNo}
+        page-size-json-pointer: ${DRUG_API_PAGE_SIZE_JSON_POINTER:/body/numOfRows}
+        product-code-field: ${DRUG_API_PRODUCT_CODE_FIELD:ITEM_SEQ}
+        product-name-field: ${DRUG_API_PRODUCT_NAME_FIELD:ITEM_NAME}
+        manufacturer-field: ${DRUG_API_MANUFACTURER_FIELD:ENTP_NAME}
+        # 구 환경변수는 전환 기간 동안 Prduct 요청변수의 fallback으로만 수용한다.
+        ingredient-product-name-parameter: ${DRUG_API_INGREDIENT_PRODUCT_NAME_PARAMETER:${DRUG_API_INGREDIENT_PRODUCT_CODE_PARAMETER:Prduct}}
+        ingredient-product-code-field: ${DRUG_API_INGREDIENT_PRODUCT_CODE_FIELD:ITEM_SEQ}
+        ingredient-product-name-field: ${DRUG_API_INGREDIENT_PRODUCT_NAME_FIELD:PRDUCT}
+        ingredient-sequence-field: ${DRUG_API_INGREDIENT_SEQUENCE_FIELD:MTRAL_SN}
+        ingredient-amount-sequence-field: ${DRUG_API_INGREDIENT_AMOUNT_SEQUENCE_FIELD:TAMT_SEQ}
+        ingredient-code-field: ${DRUG_API_INGREDIENT_CODE_FIELD:MTRAL_CODE}
+        ingredient-display-name-field: ${DRUG_API_INGREDIENT_DISPLAY_NAME_FIELD:MTRAL_NM}
+        ingredient-korean-name-field: ${DRUG_API_INGREDIENT_KOREAN_NAME_FIELD:MTRAL_NM}
+        ingredient-english-name-field: ${DRUG_API_INGREDIENT_ENGLISH_NAME_FIELD:MAIN_INGR_ENG}
+        ingredient-amount-field: ${DRUG_API_INGREDIENT_AMOUNT_FIELD:QNT}
+        ingredient-unit-field: ${DRUG_API_INGREDIENT_UNIT_FIELD:INGD_UNIT_CD}
+      client:
+        connect-timeout: 2s
+        read-timeout: 5s
+        max-retries: 2
+        retry-backoff: 300ms
+        circuit-failure-threshold: 5
+        circuit-open-duration: 30s
+        max-concurrent-calls: 8
+        permits-per-second: 5
+    dur:
+      base-url: ${DUR_API_BASE_URL:https://apis.data.go.kr/1471000/DURIrdntInfoService03}
+      operation-path: ${DUR_API_OPERATION_PATH:/getUsjntTabooInfoList02}
+      response-type: ${DUR_API_RESPONSE_TYPE:json}
+      type-name: ${DUR_API_TYPE_NAME:병용금기}
+      page-size: ${DUR_API_PAGE_SIZE:100}
+      max-pages: ${DUR_API_MAX_PAGES:100}
+      max-records: ${DUR_API_MAX_RECORDS:10000}
+      client:
+        connect-timeout: ${DUR_API_CONNECT_TIMEOUT:2s}
+        read-timeout: ${DUR_API_READ_TIMEOUT:5s}
+        max-retries: ${DUR_API_MAX_RETRIES:2}
+        retry-backoff: ${DUR_API_RETRY_BACKOFF:300ms}
+        circuit-failure-threshold: ${DUR_API_CIRCUIT_FAILURE_THRESHOLD:5}
+        circuit-open-duration: ${DUR_API_CIRCUIT_OPEN_DURATION:30s}
+        max-concurrent-calls: ${DUR_API_MAX_CONCURRENT_CALLS:8}
+        permits-per-second: ${DUR_API_PERMITS_PER_SECOND:5}
+    drug-overview:
+      base-url: ${DRUG_OVERVIEW_API_BASE_URL:https://apis.data.go.kr/1471000/DrbEasyDrugInfoService}
+      operation-path: ${DRUG_OVERVIEW_API_OPERATION_PATH:/getDrbEasyDrugList}
+      response-type: ${DRUG_OVERVIEW_API_RESPONSE_TYPE:json}
+      page-size: ${DRUG_OVERVIEW_API_PAGE_SIZE:100}
+      max-pages: ${DRUG_OVERVIEW_API_MAX_PAGES:100}
+      max-records: ${DRUG_OVERVIEW_API_MAX_RECORDS:10000}
+      client:
+        connect-timeout: ${DRUG_OVERVIEW_API_CONNECT_TIMEOUT:2s}
+        read-timeout: ${DRUG_OVERVIEW_API_READ_TIMEOUT:5s}
+        max-retries: ${DRUG_OVERVIEW_API_MAX_RETRIES:2}
+        retry-backoff: ${DRUG_OVERVIEW_API_RETRY_BACKOFF:300ms}
+        circuit-failure-threshold: ${DRUG_OVERVIEW_API_CIRCUIT_FAILURE_THRESHOLD:5}
+        circuit-open-duration: ${DRUG_OVERVIEW_API_CIRCUIT_OPEN_DURATION:30s}
+        max-concurrent-calls: ${DRUG_OVERVIEW_API_MAX_CONCURRENT_CALLS:8}
+        permits-per-second: ${DRUG_OVERVIEW_API_PERMITS_PER_SECOND:5}
+    health-functional-food:
+      base-url: ${HTFS_API_BASE_URL:https://apis.data.go.kr/1471000/HtfsInfoService03}
+      list-operation-path: ${HTFS_API_LIST_OPERATION_PATH:/getHtfsList01}
+      detail-operation-path: ${HTFS_API_DETAIL_OPERATION_PATH:/getHtfsItem01}
+      response-type: ${HTFS_API_RESPONSE_TYPE:json}
+      product-name-parameter: ${HTFS_API_PRODUCT_NAME_PARAMETER:Prduct}
+      manufacturer-parameter: ${HTFS_API_MANUFACTURER_PARAMETER:Entrps}
+      list-statement-no-parameter: ${HTFS_API_LIST_STATEMENT_NO_PARAMETER:Sttemnt_no}
+      detail-statement-no-parameter: ${HTFS_API_DETAIL_STATEMENT_NO_PARAMETER:STTEMNT_NO}
+      page-size: ${HTFS_API_PAGE_SIZE:100}
+      max-pages: ${HTFS_API_MAX_PAGES:100}
+      max-records: ${HTFS_API_MAX_RECORDS:10000}
+      client:
+        connect-timeout: ${HTFS_API_CONNECT_TIMEOUT:2s}
+        read-timeout: ${HTFS_API_READ_TIMEOUT:5s}
+        max-retries: ${HTFS_API_MAX_RETRIES:2}
+        retry-backoff: ${HTFS_API_RETRY_BACKOFF:300ms}
+        circuit-failure-threshold: ${HTFS_API_CIRCUIT_FAILURE_THRESHOLD:5}
+        circuit-open-duration: ${HTFS_API_CIRCUIT_OPEN_DURATION:30s}
+        max-concurrent-calls: ${HTFS_API_MAX_CONCURRENT_CALLS:8}
+        permits-per-second: ${HTFS_API_PERMITS_PER_SECOND:5}
+    cache:
+      positive-search-ttl: 6h
+      negative-search-ttl: 5m
+      ingredient-ttl: 24h
+      overview-ttl: 24h
+      maximum-size: 1000
+  matching:
+    auto-selection-score: 95
+    minimum-score-gap: 10
+    maximum-candidates: 5
+  supplement-interaction-rules:
+    resource: ${SUPPLEMENT_INTERACTION_RULES_RESOURCE:classpath:supplement-interaction-rules.json}
+    require-verified-manifest: ${SUPPLEMENT_INTERACTION_RULES_REQUIRE_VERIFIED_MANIFEST:true}
+  llm:
+    openai:
+      base-url: ${OPENAI_BASE_URL:https://api.openai.com}
+      responses-path: ${OPENAI_RESPONSES_PATH:/v1/responses}
+      api-key: ${OPENAI_API_KEY:}
+      model: ${OPENAI_CHAT_MODEL:gpt-4o-mini}
+      connect-timeout: ${OPENAI_CONNECT_TIMEOUT:3s}
+      read-timeout: ${OPENAI_READ_TIMEOUT:20s}
+      max-retries: ${OPENAI_MAX_RETRIES:1}
+      retry-backoff: ${OPENAI_RETRY_BACKOFF:250ms}
+      max-concurrent-calls: ${OPENAI_MAX_CONCURRENT_CALLS:4}
+      circuit-failure-threshold: ${OPENAI_CIRCUIT_FAILURE_THRESHOLD:3}
+      circuit-open-duration: ${OPENAI_CIRCUIT_OPEN_DURATION:30s}

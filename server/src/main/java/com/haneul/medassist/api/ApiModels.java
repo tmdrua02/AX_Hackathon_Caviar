@@ -3,6 +3,7 @@ package com.haneul.medassist.api;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -78,7 +79,8 @@ public final class ApiModels {
     public record ReminderRequest(@NotNull UUID medicationId, @NotNull LocalTime localTime,
                                   @NotBlank String weekdays, boolean enabled) {}
     public record ChatSession(UUID id, Instant createdAt) {}
-    public record ChatMessageRequest(@NotBlank String message) {}
+    public record ChatMessageRequest(@NotBlank String message,
+                                     @Size(max = 12000) String officialContext) {}
     public record ChatMessageAccepted(UUID messageId, String streamUrl) {}
 
     public record ApiError(String code, String message, Map<String, String> fieldErrors,

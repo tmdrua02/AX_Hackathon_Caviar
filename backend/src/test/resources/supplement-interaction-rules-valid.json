@@ -1,0 +1,59 @@
+{
+  "sources": [
+    {
+      "id": "TEST-SOURCE-1",
+      "authority": "OTHER_OFFICIAL",
+      "title": "테스트 전용 검수 근거",
+      "documentIdentifier": "TEST-DOCUMENT-1",
+      "originalText": "테스트 fixture 원문이며 production 의료 규칙이 아닙니다.",
+      "retrievedAt": "2026-08-06T00:00:00Z",
+      "verificationStatus": "VERIFIED",
+      "reviewedBy": "test-reviewer",
+      "reviewedAt": "2026-08-06T00:00:00Z"
+    }
+  ],
+  "ingredients": [
+    {
+      "id": "TEST-CANONICAL-1",
+      "canonicalName": "test canonical ingredient",
+      "displayName": "테스트 기능성 원료",
+      "aliases": [],
+      "active": true,
+      "sourceReferenceId": "TEST-SOURCE-1",
+      "verificationStatus": "VERIFIED",
+      "createdAt": "2026-08-06T00:00:00Z",
+      "updatedAt": "2026-08-06T00:00:00Z"
+    }
+  ],
+  "mappings": [
+    {
+      "id": "TEST-MAPPING-1",
+      "statementNo": "TEST-STATEMENT-1",
+      "productName": "테스트 제품",
+      "supplementIngredientCanonicalId": "TEST-CANONICAL-1",
+      "ingredientDisplayName": "테스트 기능성 원료",
+      "mappingType": "MANUAL_VERIFIED",
+      "sourceField": "TEST_FIXTURE",
+      "sourceReferenceId": "TEST-SOURCE-1",
+      "verificationStatus": "VERIFIED",
+      "createdAt": "2026-08-06T00:00:00Z",
+      "updatedAt": "2026-08-06T00:00:00Z"
+    }
+  ],
+  "rules": [
+    {
+      "id": "TEST-RULE-1",
+      "drugIngredientCode": "TEST-DRUG-CODE-1",
+      "drugIngredientName": "테스트 약 성분",
+      "supplementIngredientCanonicalId": "TEST-CANONICAL-1",
+      "severity": "CAUTION",
+      "interactionType": "OTHER",
+      "userMessage": "테스트 주의 문구",
+      "recommendation": "테스트 상담 권고",
+      "sourceReferenceIds": ["TEST-SOURCE-1"],
+      "verificationStatus": "VERIFIED",
+      "createdAt": "2026-08-06T00:00:00Z",
+      "updatedAt": "2026-08-06T00:00:00Z"
+    }
+  ]
+}

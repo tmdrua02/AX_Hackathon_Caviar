@@ -180,7 +180,9 @@ fun InteractionListScreen(
     padding: PaddingValues,
     onAdd: () -> Unit,
     onStart: () -> Unit,
+    onSupplementResult: () -> Unit,
 ) {
+    var supplementQuery by remember { mutableStateOf("") }
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(padding).statusBarsPadding(),
         contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -219,6 +221,77 @@ fun InteractionListScreen(
         }
         item { InteractionStartButton(state.newMedication != null && state.selectedExisting.isNotEmpty(), onStart) }
         item { SafetyNotice("검색 결과 없음은 안전함을 뜻하지 않습니다. 근거가 부족하면 확인 불가로 표시합니다.") }
+        item { HorizontalDivider(Modifier.padding(vertical = 6.dp)) }
+        item { Text("건강기능식품 병용 확인", style = MaterialTheme.typography.titleLarge) }
+        item { Text("공식 건강기능식품 후보를 검색하고 품목제조관리번호를 확정해 주세요.", color = Muted) }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = supplementQuery,
+                    onValueChange = { supplementQuery = it },
+                    modifier = Modifier.weight(1f),
+                    label = { Text("건강기능식품 제품명") },
+                    singleLine = true,
+                )
+                Button(
+                    onClick = { viewModel.searchSupplementProducts(supplementQuery) },
+                    enabled = supplementQuery.isNotBlank() && state.supplementSearch !is LoadState.Loading,
+                ) { Text("검색") }
+            }
+        }
+        when (val search = state.supplementSearch) {
+            LoadState.Idle -> item { Text("제품명을 입력해 공식 후보를 검색하세요.", color = Muted) }
+            LoadState.Loading -> item { LoadingCard("건강기능식품 후보를 검색하는 중입니다.") }
+            LoadState.Empty -> item { EmptyCard("일치하는 공식 건강기능식품 후보가 없습니다.") }
+            is LoadState.Error -> item { ErrorCard(search.message) { viewModel.searchSupplementProducts(supplementQuery) } }
+            is LoadState.Content -> items(search.value.candidates, key = { it.sttemntNo }) { candidate ->
+                val selected = state.selectedSupplementStatementNo == candidate.sttemntNo
+                Card(
+                    modifier = Modifier.fillMaxWidth().clickable { viewModel.selectSupplementCandidate(candidate) },
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = if (selected) Color(0xFFEAF6FF) else SurfaceSoft),
+                ) {
+                    Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = selected, onClick = { viewModel.selectSupplementCandidate(candidate) })
+                        Column(Modifier.padding(start = 8.dp)) {
+                            Text(candidate.productName, fontWeight = FontWeight.SemiBold)
+                            Text(candidate.manufacturer ?: "업체명 확인 필요", color = Muted)
+                            Text("품목제조관리번호 ${candidate.sttemntNo}", color = Muted, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+        }
+        state.selectedSupplement?.let { selected ->
+            item {
+                InfoCard(
+                    "선택한 건강기능식품",
+                    listOf(
+                        "제품명" to selected.productName,
+                        "업체명" to selected.manufacturer.orEmpty(),
+                        "품목번호" to selected.sttemntNo,
+                    ),
+                )
+            }
+        }
+        item {
+            val medicationCode = state.newMedication?.productCode
+            val supplementCode = state.selectedSupplementStatementNo
+            val loading = state.supplementInteraction is LoadState.Loading
+            Button(
+                onClick = {
+                    if (viewModel.checkSupplementInteraction(medicationCode.orEmpty(), supplementCode.orEmpty())) {
+                        onSupplementResult()
+                    }
+                },
+                enabled = !medicationCode.isNullOrBlank() && !supplementCode.isNullOrBlank() && !loading,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
+                shape = RoundedCornerShape(18.dp),
+            ) { Text("약–건강기능식품 병용 정보 확인") }
+        }
+        if (state.newMedication != null && state.newMedication.productCode.isNullOrBlank()) {
+            item { SafetyNotice("의약품의 공식 품목기준코드가 확인되어야 건강기능식품 병용 분석을 시작할 수 있습니다.") }
+        }
     }
 }
 
@@ -244,7 +317,7 @@ fun ReviewScreen(state: AppUiState, viewModel: AppViewModel, nav: NavHostControl
     var times by remember(draft.id) { mutableStateOf(draft.timesPerDay.toString()) }
     var days by remember(draft.id) { mutableStateOf(draft.days.toString()) }
     var timing by remember(draft.id) { mutableStateOf(draft.timing) }
-    var candidate by remember(draft.id) { mutableStateOf(draft.candidates.firstOrNull()?.productCode) }
+    var officialCandidate by remember(draft.id) { mutableStateOf<DrugProductSearchCandidate?>(null) }
     LazyColumn(
         Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(20.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -256,16 +329,53 @@ fun ReviewScreen(state: AppUiState, viewModel: AppViewModel, nav: NavHostControl
                 Column(Modifier.padding(16.dp)) { draft.warnings.forEach { Text("• $it", color = Color(0xFF835C00)) } }
             }
         }
-        if (draft.candidates.size > 1) {
-            item { Text("제품명 후보", style = MaterialTheme.typography.titleMedium) }
-            items(draft.candidates) { item ->
-                Row(Modifier.fillMaxWidth().clickable { candidate = item.productCode; productName = item.name }.padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-                    RadioButton(selected = candidate == item.productCode, onClick = { candidate = item.productCode; productName = item.name })
-                    Column { Text(item.name); Text("일치도 ${item.confidence}% · ${item.source}", color = Muted, style = MaterialTheme.typography.bodyMedium) }
+        item { FormField("약 제품명 *", productName) { productName = it } }
+        item {
+            Button(
+                onClick = { viewModel.searchDrugProducts(productName) },
+                enabled = productName.trim().length >= 2 && state.drugSearch !is LoadState.Loading,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
+                shape = RoundedCornerShape(16.dp),
+            ) {
+                if (state.drugSearch is LoadState.Loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                else Text("공식 의약품 후보 검색")
+            }
+        }
+        when (val search = state.drugSearch) {
+            LoadState.Idle -> item { SafetyNotice("공식 품목기준코드를 확정해야 성분·DUR 동시복용 분석을 시작할 수 있습니다.") }
+            LoadState.Loading -> item { LoadingCard("식품의약품안전처 의약품 후보와 성분을 조회하고 있습니다.") }
+            LoadState.Empty -> item { EmptyCard("일치하는 공식 의약품 후보가 없습니다. 제품명을 확인해 주세요.") }
+            is LoadState.Error -> item { ErrorCard(search.message) { viewModel.searchDrugProducts(productName) } }
+            is LoadState.Content -> {
+                item { Text("공식 제품 후보", style = MaterialTheme.typography.titleMedium) }
+                items(search.value.candidates, key = { it.productCode }) { item ->
+                    val selected = officialCandidate?.productCode == item.productCode
+                    Card(
+                        modifier = Modifier.fillMaxWidth().clickable {
+                            officialCandidate = item
+                            productName = item.productName
+                        },
+                        colors = CardDefaults.cardColors(containerColor = if (selected) Color(0xFFEAF6FF) else SurfaceSoft),
+                    ) {
+                        Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(selected = selected, onClick = {
+                                officialCandidate = item
+                                productName = item.productName
+                            })
+                            Column(Modifier.padding(start = 8.dp)) {
+                                Text(item.productName, fontWeight = FontWeight.SemiBold)
+                                Text("${item.manufacturer.orEmpty()} · 품목코드 ${item.productCode}", color = Muted)
+                                Text(
+                                    item.ingredients.joinToString { it.displayName }.ifBlank { "성분 조회 상태 ${item.ingredientLookupStatus}" },
+                                    color = Muted,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
-        item { FormField("약 제품명 *", productName) { productName = it } }
         item { FormField("1회 투약량 *", dose) { dose = it } }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -276,17 +386,21 @@ fun ReviewScreen(state: AppUiState, viewModel: AppViewModel, nav: NavHostControl
         item { FormField("복용 시점 *", timing) { timing = it } }
         item {
             InfoCard("확인 정보", listOf(
-                "제조사" to draft.manufacturer.orEmpty(), "품목기준코드" to draft.productCode.orEmpty(),
-                "주성분" to draft.ingredients.joinToString { "${it.displayName} ${it.amount?.toInt() ?: ""}${it.unit.orEmpty()}" },
+                "제조사" to (officialCandidate?.manufacturer ?: "공식 후보 선택 필요"),
+                "품목기준코드" to (officialCandidate?.productCode ?: "공식 후보 선택 필요"),
+                "주성분" to officialCandidate?.ingredients.orEmpty().joinToString { "${it.displayName} ${it.amount?.toInt() ?: ""}${it.unit.orEmpty()}" },
                 "효능·효과" to draft.efficacy.orEmpty(), "OCR 매칭" to "${draft.matchConfidence}% · ${draft.source}",
             ))
         }
         item {
             Button(
-                enabled = productName.isNotBlank() && dose.isNotBlank() && times.toIntOrNull() != null && days.toIntOrNull() != null && timing.isNotBlank() && !state.draftLoading,
+                enabled = officialCandidate != null && productName.isNotBlank() && dose.isNotBlank() && times.toIntOrNull() != null && days.toIntOrNull() != null && timing.isNotBlank() && !state.draftLoading,
                 onClick = {
+                    val selected = officialCandidate ?: return@Button
                     viewModel.updateDraft(draft.copy(productName = productName, dose = dose, timesPerDay = times.toInt(), days = days.toInt(), timing = timing,
-                        productCode = candidate ?: draft.productCode))
+                        productCode = selected.productCode, manufacturer = selected.manufacturer,
+                        ingredients = selected.ingredients, matchConfidence = selected.matchConfidence,
+                        source = selected.source.name, candidates = emptyList()))
                     viewModel.confirmDraft { nav.popBackStack(Routes.INTERACTION, false) }
                 },
                 modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp), shape = RoundedCornerShape(18.dp),
