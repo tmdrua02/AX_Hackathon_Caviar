@@ -63,6 +63,38 @@ public class OpenAiGateway {
         return apiKey != null && !apiKey.isBlank();
     }
 
+    public MedicationQueryExtraction extractMedicationQueries(String userMessage) {
+        var schema = mapper.createObjectNode();
+        schema.put("type", "object");
+        schema.put("additionalProperties", false);
+        schema.putArray("required").add("interactionQuestion").add("medicationQueries").add("ambiguousTerms");
+        var properties = schema.putObject("properties");
+        properties.putObject("interactionQuestion").put("type", "boolean");
+        properties.putObject("medicationQueries").put("type", "array")
+                .set("items", mapper.createObjectNode().put("type", "string"));
+        properties.putObject("ambiguousTerms").put("type", "array")
+                .set("items", mapper.createObjectNode().put("type", "string"));
+
+        String instructions = """
+                사용자의 한국어 복약 질문에서 실제로 언급된 의약품 제품명 또는 성분명과 함량만 추출한다.
+                함께 복용, 병용, 상호작용, 같이 먹어도 되는지 묻는 질문이면 interactionQuestion을 true로 한다.
+                medicationQueries에는 공공 의약품 검색에 사용할 수 있는 명칭을 사용자가 말한 그대로 넣고,
+                해열제·감기약·진통제처럼 특정 제품이나 성분을 확정할 수 없는 표현은 ambiguousTerms에 넣는다.
+                사용자가 말하지 않은 제품명이나 성분을 추측하거나 보충하지 않는다. 중복은 제거한다.
+                """;
+        JsonNode result = structuredResponse(
+                chatModel,
+                "medication_query_extraction",
+                instructions,
+                "[사용자 질문]\n" + userMessage,
+                schema);
+        var stringListType = mapper.getTypeFactory().constructCollectionType(java.util.List.class, String.class);
+        return new MedicationQueryExtraction(
+                result.path("interactionQuestion").asBoolean(false),
+                mapper.convertValue(result.path("medicationQueries"), stringListType),
+                mapper.convertValue(result.path("ambiguousTerms"), stringListType));
+    }
+
     public void streamChat(UUID userId, String officialContext, String userMessage, Consumer<String> delta) {
         requireConfigured();
         enforceQuota(userId, userMessage.length());
@@ -178,13 +210,14 @@ public class OpenAiGateway {
                 진단과 처방은 의료진이 실제로 말한 내용만 기록한다. evidenceIndexes는 dialogue의 0부터 시작하는
                 인덱스만 사용한다. 모든 결과는 한국어로 작성한다.
                 """;
-        return structuredResponse("consultation_record", instructions, "[진료 전사문]\n" + transcript, schema);
+        return structuredResponse(summaryModel, "consultation_record", instructions,
+                "[진료 전사문]\n" + transcript, schema);
     }
 
-    private JsonNode structuredResponse(String name, String instructions, String input, JsonNode schema) {
+    private JsonNode structuredResponse(String model, String name, String instructions, String input, JsonNode schema) {
         try {
             var payload = mapper.createObjectNode();
-            payload.put("model", summaryModel);
+            payload.put("model", model);
             payload.put("store", false);
             payload.put("instructions", instructions);
             payload.put("input", input);
@@ -245,4 +278,8 @@ public class OpenAiGateway {
         public ProviderException(String code, boolean retryable) { super(code); this.retryable = retryable; }
         public boolean retryable() { return retryable; }
     }
+
+    public record MedicationQueryExtraction(boolean interactionQuestion,
+                                            java.util.List<String> medicationQueries,
+                                            java.util.List<String> ambiguousTerms) {}
 }

@@ -52,7 +52,7 @@ object AppModule {
         .addInterceptor { chain ->
             val path = chain.request().url.encodedPath
             when {
-                path.endsWith("/stream") -> chain.withReadTimeout(60, TimeUnit.SECONDS).proceed(chain.request())
+                path.endsWith("/stream") -> chain.withReadTimeout(150, TimeUnit.SECONDS).proceed(chain.request())
                 path == "/api/v1/consultations" -> chain.withWriteTimeout(180, TimeUnit.SECONDS)
                     .withReadTimeout(60, TimeUnit.SECONDS).proceed(chain.request())
                 else -> chain.proceed(chain.request())

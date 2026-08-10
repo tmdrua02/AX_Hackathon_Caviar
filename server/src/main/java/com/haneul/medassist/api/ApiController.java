@@ -172,7 +172,7 @@ public class ApiController {
     SseEmitter stream(@PathVariable UUID id) {
         String prompt = store.lastPrompt(id);
         String officialContext = store.lastOfficialContext(id);
-        SseEmitter emitter = new SseEmitter(30_000L);
+        SseEmitter emitter = new SseEmitter(120_000L);
         try {
             CompletableFuture.runAsync(() -> {
                 try {

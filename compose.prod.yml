@@ -69,6 +69,7 @@ services:
       DB_USERNAME: ${DB_USERNAME:-sa}
       DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
       MEDASSIST_STORAGE_ROOT: /var/lib/medassist/recordings
+      BACKEND_BASE_URL: http://backend:8081
       OPENAI_API_KEY: ${OPENAI_API_KEY:?Set OPENAI_API_KEY in .env}
       OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-gpt-4o-mini}
       OPENAI_SUMMARY_MODEL: ${OPENAI_SUMMARY_MODEL:-gpt-4o-mini}

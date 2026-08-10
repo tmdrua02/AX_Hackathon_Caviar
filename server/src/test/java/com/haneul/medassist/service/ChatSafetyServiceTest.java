@@ -10,7 +10,8 @@ class ChatSafetyServiceTest {
     @Test
     void officialInteractionContextIsUsedByLocalSafetyFallback() {
         var provider = new StaticListableBeanFactory().getBeanProvider(OpenAiGateway.class);
-        var service = new ChatSafetyService(provider);
+        var contextProvider = new StaticListableBeanFactory().getBeanProvider(OfficialMedicationContextService.class);
+        var service = new ChatSafetyService(provider, contextProvider);
         var answer = service.answer(
                 "두 약을 같이 먹어도 돼?",
                 "조합: 새 약 / 기존 약\n판정: PROHIBITED\n공식 근거: DUR-1");
