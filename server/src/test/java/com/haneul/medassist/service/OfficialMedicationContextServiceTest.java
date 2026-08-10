@@ -44,7 +44,7 @@ class OfficialMedicationContextServiceTest {
     void exactOfficialProductsCreateIngredientAndDurContext() throws Exception {
         startBackend();
         OpenAiGateway openAi = mock(OpenAiGateway.class);
-        String prompt = "타이레놀정500밀리그람과 부루펜정200밀리그램을 함께 먹어도 돼?";
+        String prompt = "타이레놀정500밀리그람(아세트아미노펜)과 부루펜정200밀리그램(이부프로펜)을 함께 먹어도 돼?";
         when(openAi.extractMedicationQueries(prompt)).thenReturn(new OpenAiGateway.MedicationQueryExtraction(
                 true,
                 List.of("타이레놀정500밀리그람", "아세트아미노펜", "부루펜정200밀리그램", "이부프로펜"),
@@ -69,11 +69,11 @@ class OfficialMedicationContextServiceTest {
             String request = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
             if (request.contains("타이레놀")) {
                 respond(exchange, """
-                        {"candidates":[{"productCode":"TYLENOL-500","productName":"타이레놀정500밀리그람","manufacturer":"켄뷰","ingredients":[{"displayName":"아세트아미노펜"}],"matchConfidence":100,"ingredientLookupStatus":"RESOLVED"}]}
+                        {"candidates":[{"productCode":"TYLENOL-500","productName":"타이레놀정500밀리그람(아세트아미노펜)","manufacturer":"켄뷰","ingredients":[{"displayName":"아세트아미노펜"}],"matchConfidence":100,"ingredientLookupStatus":"RESOLVED"}]}
                         """);
             } else {
                 respond(exchange, """
-                        {"candidates":[{"productCode":"BRUFEN-200","productName":"부루펜정200밀리그램","manufacturer":"삼일제약","ingredients":[{"displayName":"이부프로펜"}],"matchConfidence":100,"ingredientLookupStatus":"RESOLVED"}]}
+                        {"candidates":[{"productCode":"BRUFEN-200","productName":"부루펜정200밀리그램(이부프로펜)","manufacturer":"삼일제약","ingredients":[{"displayName":"이부프로펜"}],"matchConfidence":100,"ingredientLookupStatus":"RESOLVED"}]}
                         """);
             }
         });

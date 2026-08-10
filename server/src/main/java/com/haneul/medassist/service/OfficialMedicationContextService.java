@@ -51,6 +51,7 @@ public class OfficialMedicationContextService {
 
         List<String> queries = new ArrayList<>(new LinkedHashSet<>(extraction.medicationQueries().stream()
                 .map(String::trim).filter(value -> value.length() >= 2).toList()));
+        queries = attachTrailingParenthetical(prompt, queries);
         queries = removeParentheticalIngredientDuplicates(prompt, queries);
         if (queries.size() > MAX_MEDICATIONS) queries = queries.subList(0, MAX_MEDICATIONS);
         if (!extraction.ambiguousTerms().isEmpty() || queries.size() < 2) {
@@ -229,6 +230,26 @@ public class OfficialMedicationContextService {
                 .filter(query -> parenthetical.stream().noneMatch(value -> value.contains(compact(query))))
                 .toList();
         return outside.size() >= 2 ? new ArrayList<>(outside) : queries;
+    }
+
+    private List<String> attachTrailingParenthetical(String prompt, List<String> queries) {
+        List<String> attached = new ArrayList<>();
+        for (String query : queries) {
+            int queryStart = prompt.indexOf(query);
+            if (queryStart < 0) {
+                attached.add(query);
+                continue;
+            }
+            int cursor = queryStart + query.length();
+            while (cursor < prompt.length() && Character.isWhitespace(prompt.charAt(cursor))) cursor++;
+            if (cursor >= prompt.length() || prompt.charAt(cursor) != '(') {
+                attached.add(query);
+                continue;
+            }
+            int closing = prompt.indexOf(')', cursor + 1);
+            attached.add(closing < 0 ? query : query + prompt.substring(cursor, closing + 1));
+        }
+        return attached;
     }
 
     private record ProductSearch(String query, JsonNode candidates) {}
