@@ -38,7 +38,7 @@ import com.haneul.medassist.ui.theme.Primary
 import java.io.File
 
 @Composable
-fun CaptureScreen(state: AppUiState, viewModel: AppViewModel, nav: NavHostController) {
+fun CaptureScreen(state: AppUiState, viewModel: AppViewModel, nav: NavHostController, mode: String) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var hasPermission by remember {
@@ -46,6 +46,7 @@ fun CaptureScreen(state: AppUiState, viewModel: AppViewModel, nav: NavHostContro
     }
     var pending by remember { mutableStateOf<Uri?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
+    val isPrescription = mode == "prescription"
     val isFront = state.frontPhoto == null
     val bothReady = state.frontPhoto != null && state.backPhoto != null
     val controller = remember {
@@ -67,27 +68,29 @@ fun CaptureScreen(state: AppUiState, viewModel: AppViewModel, nav: NavHostContro
         onDispose { controller.unbind() }
     }
 
-    Column(Modifier.fillMaxSize().statusBarsPadding().background(Color.Black)) {
+    Column(
+        Modifier.fillMaxSize().statusBarsPadding().imePadding().background(Color.Black),
+    ) {
         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = { nav.popBackStack() }, modifier = Modifier.size(48.dp)) {
                 Icon(Icons.Default.ArrowBack, contentDescription = "뒤로가기", tint = Color.White)
             }
-            Text("제품·처방전 촬영", color = Color.White, style = MaterialTheme.typography.titleLarge)
+            Text(if (isPrescription) "처방전·약 봉투 촬영" else "포장·약통·약상자 촬영", color = Color.White, style = MaterialTheme.typography.titleLarge)
         }
         Text(
-            if (bothReady) "앞면과 뒷면 촬영 완료" else if (isFront) "앞면 1/2" else "뒷면 2/2",
+            if (bothReady) "촬영 완료" else if (!isPrescription) "제품명이 잘 보이도록 촬영해주세요" else if (isFront) "처방전 앞면을 촬영해주세요 · 1/2" else "필요하면 뒷면을 촬영해주세요 · 2/2",
             color = Primary, modifier = Modifier.align(Alignment.CenterHorizontally), style = MaterialTheme.typography.titleMedium,
         )
         Spacer(Modifier.height(10.dp))
-        Box(Modifier.fillMaxWidth().weight(1f).padding(horizontal = 18.dp).clip(RoundedCornerShape(26.dp)).background(Color(0xFF17191D))) {
+        Box(Modifier.fillMaxWidth().weight(1f, fill = true).padding(horizontal = 18.dp).clip(RoundedCornerShape(26.dp)).background(Color(0xFF17191D))) {
             when {
                 pending != null -> AndroidView(
                     factory = { ImageView(it).apply { scaleType = ImageView.ScaleType.FIT_CENTER } },
                     update = { it.setImageURI(pending) }, modifier = Modifier.fillMaxSize(),
                 )
                 bothReady -> Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Default.CheckCircle, contentDescription = "앞면과 뒷면 준비 완료", tint = Primary, modifier = Modifier.size(92.dp))
-                    Text("두 장이 준비되었습니다", color = Color.White)
+                    Icon(Icons.Default.CheckCircle, contentDescription = "OCR 촬영 준비 완료", tint = Primary, modifier = Modifier.size(92.dp))
+                    Text("OCR 분석을 시작할 수 있습니다", color = Color.White)
                 }
                 hasPermission -> AndroidView(
                     factory = { PreviewView(it).apply { this.controller = controller; scaleType = PreviewView.ScaleType.FILL_CENTER } },
@@ -111,17 +114,23 @@ fun CaptureScreen(state: AppUiState, viewModel: AppViewModel, nav: NavHostContro
         when {
             pending != null -> Row(Modifier.fillMaxWidth().padding(18.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedButton(onClick = { pending = null }, Modifier.weight(1f).heightIn(min = 54.dp)) { Text("다시 촬영") }
-                Button(onClick = { pending?.let { viewModel.setPhoto(isFront, it) }; pending = null }, Modifier.weight(1f).heightIn(min = 54.dp)) { Text("이 사진 사용") }
+                Button(onClick = {
+                    pending?.let {
+                        viewModel.setPhoto(isFront, it)
+                        if (!isPrescription) viewModel.setPhoto(false, it)
+                    }
+                    pending = null
+                }, Modifier.weight(1f).heightIn(min = 54.dp)) { Text("이 사진 사용") }
             }
             bothReady -> Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (isPrescription) Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     TextButton(onClick = { viewModel.clearPhoto(true) }, Modifier.weight(1f)) { Text("앞면 다시 선택") }
                     TextButton(onClick = { viewModel.clearPhoto(false) }, Modifier.weight(1f)) { Text("뒷면 다시 선택") }
-                }
+                } else TextButton(onClick = { viewModel.clearPhoto(true); viewModel.clearPhoto(false) }, Modifier.fillMaxWidth()) { Text("다시 촬영") }
                 Button(
-                    onClick = { viewModel.submitPhotos { nav.navigate(Routes.REVIEW) } }, enabled = !state.draftLoading,
+                    onClick = { nav.navigate(Routes.OCR_LOADING) }, enabled = !state.draftLoading,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp), shape = RoundedCornerShape(18.dp),
-                ) { if (state.draftLoading) CircularProgressIndicator(Modifier.size(22.dp), color = Color.White) else Text("OCR 결과 검토하기") }
+                ) { Text("OCR 분석 시작") }
             }
             else -> Row(Modifier.fillMaxWidth().padding(18.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = { galleryLauncher.launch("image/*") }) {
@@ -138,7 +147,7 @@ fun CaptureScreen(state: AppUiState, viewModel: AppViewModel, nav: NavHostContro
                     },
                     enabled = hasPermission,
                     modifier = Modifier.size(82.dp).clip(CircleShape).background(Color.White),
-                ) { Icon(Icons.Default.Camera, contentDescription = if (isFront) "앞면 촬영" else "뒷면 촬영", tint = Color.Black, modifier = Modifier.size(40.dp)) }
+                ) { Icon(Icons.Default.Camera, contentDescription = if (!isPrescription) "제품 촬영" else if (isFront) "앞면 촬영" else "뒷면 촬영", tint = Color.Black, modifier = Modifier.size(40.dp)) }
                 Spacer(Modifier.width(80.dp))
             }
         }

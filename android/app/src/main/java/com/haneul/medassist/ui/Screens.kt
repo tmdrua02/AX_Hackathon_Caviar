@@ -1,7 +1,9 @@
 package com.haneul.medassist.ui
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -16,9 +18,12 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -53,7 +58,7 @@ import java.util.Locale
 import androidx.compose.ui.window.Dialog
 
 @Composable
-fun HomeScreen(state: AppUiState, viewModel: AppViewModel, padding: PaddingValues) {
+private fun LegacyHomeScreen(state: AppUiState, viewModel: AppViewModel, padding: PaddingValues) {
     var confirm by remember { mutableStateOf<Medication?>(null) }
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(padding).statusBarsPadding(),
@@ -93,12 +98,13 @@ fun HomeScreen(state: AppUiState, viewModel: AppViewModel, padding: PaddingValue
         item { Spacer(Modifier.height(88.dp)) }
     }
     confirm?.let { medication ->
-        AlertDialog(
-            onDismissRequest = { confirm = null },
-            title = { Text(if (medication.taken) "복용 완료를 취소할까요?" else "복용을 완료했나요?") },
-            text = { Text("${medication.name} · ${medication.dose.orEmpty()}\n변경 내용은 서버와 동기화됩니다.") },
-            confirmButton = { TextButton(onClick = { viewModel.toggleDose(medication); confirm = null }) { Text("확인") } },
-            dismissButton = { TextButton(onClick = { confirm = null }) { Text("취소") } },
+        AppConfirmDialog(
+            title = if (medication.taken) "복용 완료를 취소할까요?" else "복용을 완료했나요?",
+            message = "${medication.name} · ${medication.dose.orEmpty()}\n변경 내용은 서버와 동기화됩니다.",
+            confirmText = "확인",
+            danger = medication.taken,
+            onDismiss = { confirm = null },
+            onConfirm = { viewModel.toggleDose(medication); confirm = null },
         )
     }
 }
@@ -110,6 +116,8 @@ private fun CountsCard(counts: Counts) {
             CountItem("전체", counts.total, Modifier.weight(1f))
             VerticalDivider(Modifier.height(44.dp))
             CountItem("처방약", counts.prescriptions, Modifier.weight(1f))
+            VerticalDivider(Modifier.height(44.dp))
+            CountItem("일반약", counts.otc, Modifier.weight(1f))
             VerticalDivider(Modifier.height(44.dp))
             CountItem("건강기능식품", counts.supplements, Modifier.weight(1f))
         }
@@ -143,7 +151,7 @@ private fun MedicationCard(medication: Medication, onToggle: () -> Unit) {
 }
 
 @Composable
-fun AlarmScreen(state: AppUiState, padding: PaddingValues) {
+private fun LegacyAlarmScreen(state: AppUiState, padding: PaddingValues) {
     val context = LocalContext.current
     var notificationGranted by remember {
         mutableStateOf(android.os.Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED)
@@ -173,124 +181,238 @@ fun AlarmScreen(state: AppUiState, padding: PaddingValues) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun InteractionListScreen(
     state: AppUiState,
     viewModel: AppViewModel,
     padding: PaddingValues,
-    onAdd: () -> Unit,
+    onAdd: (String) -> Unit,
+    onManualAdd: () -> Unit,
     onStart: () -> Unit,
-    onSupplementResult: () -> Unit,
+    initialSection: MedicationListFilter? = null,
 ) {
-    var supplementQuery by remember { mutableStateOf("") }
-    LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(padding).statusBarsPadding(),
-        contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        item { Text("동시 복용 확인", style = MaterialTheme.typography.headlineMedium) }
-        item { Text("새로 추가한 약", style = MaterialTheme.typography.titleMedium) }
+    var showAddIntro by remember { mutableStateOf(false) }
+    var showAddMethods by remember { mutableStateOf(false) }
+    var editMedication by remember { mutableStateOf<Medication?>(null) }
+    var deleteMedication by remember { mutableStateOf<Medication?>(null) }
+    val activeMedicationIds = state.medications.filter { it.active }.mapTo(hashSetOf()) { it.id }
+    val selectedActiveIds = state.selectedExisting intersect activeMedicationIds
+    val medicationGroups = listOf(
+        Triple(MedicationListFilter.PRESCRIPTION, "처방약", state.medications.filter { it.active && it.productType == ProductType.PRESCRIPTION_DRUG }),
+        Triple(MedicationListFilter.OTC, "일반약", state.medications.filter { it.active && it.productType == ProductType.OTC_DRUG }),
+        Triple(MedicationListFilter.SUPPLEMENT, "건강기능식품", state.medications.filter { it.active && it.productType == ProductType.HEALTH_SUPPLEMENT }),
+        Triple(null, "분류 미확인", state.medications.filter { it.active && it.productType == ProductType.UNKNOWN }),
+    ).filter { it.third.isNotEmpty() }
+    val sectionIndices = buildMap<MedicationListFilter, Int> {
+        var index = 4
+        medicationGroups.forEach { (filter, _, medications) ->
+            filter?.let { put(it, index) }
+            index += 1 + medications.size
+        }
+    }
+    val listState = rememberLazyListState()
+    var initialScrollConsumed by remember(initialSection) { mutableStateOf(false) }
+    LaunchedEffect(initialSection, sectionIndices) {
+        if (!initialScrollConsumed && initialSection != null) {
+            val target = if (initialSection == MedicationListFilter.ALL) 0 else sectionIndices[initialSection]
+            target?.let { listState.scrollToItem(it) }
+            initialScrollConsumed = true
+        }
+    }
+    Column(Modifier.fillMaxSize().padding(padding).statusBarsPadding().background(Color.White)) {
+        MainTopBar("복용약 확인")
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+        item { Text("약 추가하기", style = MaterialTheme.typography.titleMedium) }
         item {
             val added = state.newMedication
             Card(
-                modifier = Modifier.fillMaxWidth().clickable(onClick = onAdd),
+                modifier = Modifier.fillMaxWidth().clickable { if (state.newMedication == null) showAddIntro = true else showAddMethods = true },
                 shape = RoundedCornerShape(22.dp),
                 colors = CardDefaults.cardColors(containerColor = if (added == null) Color.White else Color(0xFFEAF6FF)),
                 border = androidx.compose.foundation.BorderStroke(2.dp, if (added == null) Color(0xFFCBD1D8) else Primary),
             ) {
                 Row(Modifier.fillMaxWidth().padding(22.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(if (added == null) Icons.Default.AddAPhoto else Icons.Default.Medication, null, tint = Primary)
-                    Column(Modifier.padding(start = 14.dp)) {
+                    Column(Modifier.padding(start = 14.dp).weight(1f)) {
                         Text(added?.name ?: "비교할 약을 추가해주세요", fontWeight = FontWeight.SemiBold)
                         Text(if (added == null) "제품·처방전 앞면과 뒷면 촬영" else added.ingredients.joinToString { it.displayName }, color = Muted)
+                    }
+                    if (added != null) IconButton(onClick = { showAddMethods = true }) {
+                        Icon(Icons.Default.Edit, contentDescription = "인식 정보 다시 등록", tint = Primary)
+                    }
+                }
+            }
+        }
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth().clickable(onClick = onManualAdd),
+                shape = RoundedCornerShape(22.dp),
+                colors = CardDefaults.cardColors(containerColor = SurfaceSoft),
+            ) {
+                Row(Modifier.fillMaxWidth().padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Add, contentDescription = null, tint = Primary)
+                    Column(Modifier.padding(start = 14.dp)) {
+                        Text("직접 추가하기", fontWeight = FontWeight.SemiBold)
+                        Text("약 이름과 분류를 직접 입력", color = Muted)
                     }
                 }
             }
         }
         item { Text("기존 복용 제품 ${state.medications.count { it.active }}", style = MaterialTheme.typography.titleMedium) }
-        items(state.medications.filter { it.active }, key = { it.id }) { medication ->
+        if (medicationGroups.isEmpty()) {
+            item { EmptyCard("등록된 복용약이 없습니다.") }
+        }
+        medicationGroups.forEach { (filter, title, medications) ->
+        item(key = "medication-group-${filter ?: "unknown"}") {
+            Text("$title ${medications.size}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        }
+        items(medications, key = { it.id }) { medication ->
             val selected = medication.id in state.selectedExisting
+            var menuExpanded by remember(medication.id) { mutableStateOf(false) }
             Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = SurfaceSoft), modifier = Modifier.clickable { viewModel.toggleExisting(medication.id) }) {
                 Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = selected, onCheckedChange = { viewModel.toggleExisting(medication.id) })
-                    Column(Modifier.padding(start = 8.dp)) {
+                    Column(Modifier.padding(start = 8.dp).weight(1f)) {
                         Text(medication.name, fontWeight = FontWeight.SemiBold)
                         Text(medication.ingredients.joinToString { it.displayName }, color = Muted)
                     }
-                }
-            }
-        }
-        item { InteractionStartButton(state.newMedication != null && state.selectedExisting.isNotEmpty(), onStart) }
-        item { SafetyNotice("검색 결과 없음은 안전함을 뜻하지 않습니다. 근거가 부족하면 확인 불가로 표시합니다.") }
-        item { HorizontalDivider(Modifier.padding(vertical = 6.dp)) }
-        item { Text("건강기능식품 병용 확인", style = MaterialTheme.typography.titleLarge) }
-        item { Text("공식 건강기능식품 후보를 검색하고 품목제조관리번호를 확정해 주세요.", color = Muted) }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(
-                    value = supplementQuery,
-                    onValueChange = { supplementQuery = it },
-                    modifier = Modifier.weight(1f),
-                    label = { Text("건강기능식품 제품명") },
-                    singleLine = true,
-                )
-                Button(
-                    onClick = { viewModel.searchSupplementProducts(supplementQuery) },
-                    enabled = supplementQuery.isNotBlank() && state.supplementSearch !is LoadState.Loading,
-                ) { Text("검색") }
-            }
-        }
-        when (val search = state.supplementSearch) {
-            LoadState.Idle -> item { Text("제품명을 입력해 공식 후보를 검색하세요.", color = Muted) }
-            LoadState.Loading -> item { LoadingCard("건강기능식품 후보를 검색하는 중입니다.") }
-            LoadState.Empty -> item { EmptyCard("일치하는 공식 건강기능식품 후보가 없습니다.") }
-            is LoadState.Error -> item { ErrorCard(search.message) { viewModel.searchSupplementProducts(supplementQuery) } }
-            is LoadState.Content -> items(search.value.candidates, key = { it.sttemntNo }) { candidate ->
-                val selected = state.selectedSupplementStatementNo == candidate.sttemntNo
-                Card(
-                    modifier = Modifier.fillMaxWidth().clickable { viewModel.selectSupplementCandidate(candidate) },
-                    shape = RoundedCornerShape(18.dp),
-                    colors = CardDefaults.cardColors(containerColor = if (selected) Color(0xFFEAF6FF) else SurfaceSoft),
-                ) {
-                    Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(selected = selected, onClick = { viewModel.selectSupplementCandidate(candidate) })
-                        Column(Modifier.padding(start = 8.dp)) {
-                            Text(candidate.productName, fontWeight = FontWeight.SemiBold)
-                            Text(candidate.manufacturer ?: "업체명 확인 필요", color = Muted)
-                            Text("품목제조관리번호 ${candidate.sttemntNo}", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Box {
+                        IconButton(onClick = { menuExpanded = true }) { Icon(Icons.Default.MoreVert, contentDescription = "${medication.name} 메뉴") }
+                        AppPopupMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                            AppPopupMenuItem("수정") { menuExpanded = false; editMedication = medication }
+                            AppPopupMenuItem("삭제", danger = true) { menuExpanded = false; deleteMedication = medication }
                         }
                     }
                 }
             }
         }
-        state.selectedSupplement?.let { selected ->
-            item {
-                InfoCard(
-                    "선택한 건강기능식품",
-                    listOf(
-                        "제품명" to selected.productName,
-                        "업체명" to selected.manufacturer.orEmpty(),
-                        "품목번호" to selected.sttemntNo,
-                    ),
-                )
+        }
+        item { InteractionStartButton(state.newMedication != null && selectedActiveIds.isNotEmpty(), onStart) }
+        item { SafetyNotice("검색 결과 없음은 안전함을 뜻하지 않습니다. 근거가 부족하면 확인 불가로 표시합니다.") }
+        }
+    }
+    editMedication?.let { medication ->
+        MedicationEditDialog(
+            medication = medication,
+            onDismiss = { editMedication = null },
+            onSave = { name, type, description ->
+                viewModel.updateMedication(medication, name, type, description) { editMedication = null }
+            },
+        )
+    }
+    deleteMedication?.let { medication ->
+        AppConfirmDialog(
+            title = "복용약 삭제",
+            message = "이 약을 복용 목록에서 삭제하시겠습니까?\n연결된 복용 알람은 안전을 위해 비활성화됩니다.",
+            confirmText = "삭제",
+            danger = true,
+            onDismiss = { deleteMedication = null },
+            onConfirm = { viewModel.deleteMedication(medication); deleteMedication = null },
+        )
+    }
+    if (showAddIntro) {
+        Dialog(onDismissRequest = { showAddIntro = false }) {
+            Surface(shape = RoundedCornerShape(28.dp), color = Color.White, shadowElevation = 10.dp) {
+                Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                    Row(verticalAlignment = Alignment.Top) {
+                        Text("비교할 약을 새로 추가해주세요!", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                        IconButton(onClick = { showAddIntro = false }) { Icon(Icons.Default.Close, contentDescription = "닫기") }
+                    }
+                    Button(
+                        onClick = { showAddIntro = false; showAddMethods = true },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
+                        shape = RoundedCornerShape(18.dp),
+                    ) { Text("약 추가하기") }
+                }
             }
         }
-        item {
-            val medicationCode = state.newMedication?.productCode
-            val supplementCode = state.selectedSupplementStatementNo
-            val loading = state.supplementInteraction is LoadState.Loading
-            Button(
-                onClick = {
-                    if (viewModel.checkSupplementInteraction(medicationCode.orEmpty(), supplementCode.orEmpty())) {
-                        onSupplementResult()
-                    }
-                },
-                enabled = !medicationCode.isNullOrBlank() && !supplementCode.isNullOrBlank() && !loading,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
-                shape = RoundedCornerShape(18.dp),
-            ) { Text("약–건강기능식품 병용 정보 확인") }
+    }
+    if (showAddMethods) {
+        ModalBottomSheet(
+            onDismissRequest = { showAddMethods = false },
+            containerColor = Color.White,
+            shape = RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp),
+        ) {
+            Column(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, bottom = 34.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("약 등록 방식 선택", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(vertical = 8.dp))
+                AddMethodCard("처방전 스캔", "병원 처방전·약 봉투를 촬영해 등록") {
+                    showAddMethods = false; viewModel.resetComparisonCapture(); onAdd("prescription")
+                }
+                AddMethodCard("포장·약통·약상자 스캔", "일반약·건강기능식품을 촬영해 등록") {
+                    showAddMethods = false; viewModel.resetComparisonCapture(); onAdd("package")
+                }
+            }
         }
-        if (state.newMedication != null && state.newMedication.productCode.isNullOrBlank()) {
-            item { SafetyNotice("의약품의 공식 품목기준코드가 확인되어야 건강기능식품 병용 분석을 시작할 수 있습니다.") }
+    }
+}
+
+@Composable
+private fun AddMethodCard(title: String, subtitle: String, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(containerColor = SurfaceSoft),
+    ) {
+        Row(Modifier.fillMaxWidth().padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text(title, style = MaterialTheme.typography.titleMedium)
+                Text(subtitle, color = Muted)
+            }
+            Icon(Icons.Default.ChevronRight, contentDescription = "선택", tint = Primary)
+        }
+    }
+}
+
+@Composable
+private fun MedicationEditDialog(
+    medication: Medication,
+    onDismiss: () -> Unit,
+    onSave: (String, ProductType, String) -> Unit,
+) {
+    var name by remember(medication.id) { mutableStateOf(medication.name) }
+    var productType by remember(medication.id) { mutableStateOf(medication.productType) }
+    var description by remember(medication.id) { mutableStateOf(medication.ingredients.joinToString { it.displayName }) }
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(shape = RoundedCornerShape(28.dp), color = Color.White, shadowElevation = 10.dp) {
+            Column(
+                Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("복용약 수정", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = "수정 닫기") }
+                }
+                OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), label = { Text("약 이름") }, singleLine = true, shape = RoundedCornerShape(16.dp))
+                Text("약 분류", fontWeight = FontWeight.SemiBold)
+                listOf(
+                    ProductType.PRESCRIPTION_DRUG to "처방약",
+                    ProductType.OTC_DRUG to "일반약",
+                    ProductType.HEALTH_SUPPLEMENT to "건강기능식품",
+                ).forEach { (type, label) ->
+                    Surface(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { productType = type },
+                        color = if (productType == type) Color(0xFFEAF6FF) else SurfaceSoft,
+                    ) {
+                        Row(Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(productType == type, onClick = { productType = type })
+                            Text(label, Modifier.padding(start = 6.dp))
+                        }
+                    }
+                }
+                OutlinedTextField(description, { description = it }, Modifier.fillMaxWidth(), label = { Text("성분명 또는 설명") }, shape = RoundedCornerShape(16.dp))
+                Button(
+                    onClick = { onSave(name, productType, description) },
+                    enabled = name.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                    shape = RoundedCornerShape(16.dp),
+                ) { Text("수정 완료", fontWeight = FontWeight.Bold) }
+            }
         }
     }
 }
@@ -318,11 +440,7 @@ fun ReviewScreen(state: AppUiState, viewModel: AppViewModel, nav: NavHostControl
     var days by remember(draft.id) { mutableStateOf(draft.days.toString()) }
     var timing by remember(draft.id) { mutableStateOf(draft.timing) }
     var officialCandidate by remember(draft.id) { mutableStateOf<DrugProductSearchCandidate?>(null) }
-    LazyColumn(
-        Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(20.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        item { BackTitle("OCR 결과 검토", nav) }
+    FixedBackHeaderScreen("OCR 결과 검토", nav, contentPadding = PaddingValues(20.dp)) {
         item { Text("자동 인식 결과를 확인·수정한 뒤 확정해 주세요.", color = Muted) }
         if (draft.warnings.isNotEmpty()) item {
             Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF7E5)), shape = RoundedCornerShape(18.dp)) {
@@ -406,7 +524,7 @@ fun ReviewScreen(state: AppUiState, viewModel: AppViewModel, nav: NavHostControl
                 modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp), shape = RoundedCornerShape(18.dp),
             ) { if (state.draftLoading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Text("확인하고 새 약 추가") }
         }
-        item { SafetyNotice("제품이 확정되기 전에는 동시복용 분석을 시작하지 않습니다.") }
+        item { SafetyNotice("제품이 확정되기 전에는 복용약 확인 분석을 시작하지 않습니다.") }
     }
 }
 
@@ -445,8 +563,7 @@ fun AnalyzingScreen(state: AppUiState, viewModel: AppViewModel, nav: NavHostCont
 fun ResultScreen(state: AppUiState, viewModel: AppViewModel, nav: NavHostController) {
     val check = (state.interaction as? LoadState.Content)?.value
     var detail by remember { mutableStateOf<InteractionResult?>(null) }
-    LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        item { BackTitle("동시 복용 확인 결과", nav) }
+    FixedBackHeaderScreen("복용약 확인 결과", nav, contentPadding = PaddingValues(20.dp)) {
         if (check == null) item { ErrorCard("결과를 찾을 수 없습니다.") { nav.popBackStack() } }
         else {
             item {
@@ -482,6 +599,17 @@ private fun ResultCard(result: InteractionResult, onClick: () -> Unit) {
         colors = CardDefaults.cardColors(containerColor = color.copy(alpha = 0.09f)),
         border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = 0.45f))) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                when (result.severity) {
+                    Severity.PROHIBITED -> "함께 복용하면 안 돼요!"
+                    Severity.CAUTION -> "복용 시 주의하세요"
+                    Severity.DUPLICATE_OR_SIMILAR -> "효능이 비슷해요!"
+                    Severity.NO_KNOWN_ISSUE -> "확인된 위험 정보가 없어요"
+                    Severity.UNKNOWN -> "전문가 확인이 필요해요"
+                },
+                style = MaterialTheme.typography.titleLarge,
+                color = color,
+            )
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(if (result.severity == Severity.UNKNOWN) Icons.Default.HelpOutline else Icons.Default.HealthAndSafety, null, tint = color)
                 Text(result.title, Modifier.padding(start = 8.dp).weight(1f), fontWeight = FontWeight.Bold, color = color)
@@ -499,25 +627,48 @@ private fun ResultCard(result: InteractionResult, onClick: () -> Unit) {
 
 @Composable
 private fun ResultDetailDialog(result: InteractionResult, onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.FactCheck, null, tint = Primary); Text("  판정 근거 상세") } },
-        text = {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                item { Text(result.easyExplanation) }
-                item { Text("관련 제품", fontWeight = FontWeight.Bold); Text("${result.newMedication.name} / ${result.existingMedication.name}") }
-                if (result.evidence.isEmpty()) item { Text("공식 관계 데이터가 없어 원문 근거를 표시할 수 없습니다. 이는 안전하다는 의미가 아닙니다.", color = Muted) }
-                items(result.evidence) { evidence ->
-                    HorizontalDivider()
-                    Text("${evidence.ingredientA} / ${evidence.ingredientB}", fontWeight = FontWeight.Bold)
-                    Text(evidence.originalSummary ?: "원문 요약 없음")
-                    Text("${evidence.sourceType} · ${evidence.sourceName}", color = Primary)
-                    Text("고시/수정일 ${evidence.sourceDate ?: "확인 필요"}\n${evidence.sourceUrl}", color = Muted, style = MaterialTheme.typography.bodyMedium)
+    val context = LocalContext.current
+    val sourceUrl = result.evidence.firstOrNull()?.sourceUrl?.takeIf { it.startsWith("http") }
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(28.dp),
+            color = Color.White,
+            shadowElevation = 10.dp,
+        ) {
+            Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.FactCheck, null, tint = Primary)
+                    Text("판정 근거 상세", Modifier.padding(start = 10.dp).weight(1f), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = "상세 닫기") }
                 }
+                LazyColumn(Modifier.heightIn(max = 480.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    item { Text(result.easyExplanation, style = MaterialTheme.typography.titleMedium) }
+                    item {
+                        Text("관련 제품", fontWeight = FontWeight.Bold)
+                        Text("${result.newMedication.name} / ${result.existingMedication.name}", color = Muted)
+                    }
+                    if (result.evidence.isEmpty()) item {
+                        Text("공식 관계 데이터가 없어 원문 근거를 표시할 수 없습니다. 이는 안전하다는 의미가 아닙니다.", color = Muted)
+                    }
+                    items(result.evidence) { evidence ->
+                        HorizontalDivider()
+                        Text("관련 성분", fontWeight = FontWeight.Bold)
+                        Text("${evidence.ingredientA} ↔ ${evidence.ingredientB}")
+                        evidence.originalSummary?.let { Text(it) }
+                        Text("${evidence.sourceType} · ${evidence.sourceName}", color = Primary)
+                        Text("고시/수정일 ${evidence.sourceDate ?: "확인 필요"}", color = Muted, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+                Button(
+                    onClick = { sourceUrl?.let { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(it))) } },
+                    enabled = sourceUrl != null,
+                    modifier = Modifier.fillMaxWidth().height(54.dp),
+                    shape = RoundedCornerShape(14.dp),
+                ) { Text(if (sourceUrl == null) "표시할 근거 출처 없음" else "근거 출처 보기", fontWeight = FontWeight.Bold) }
             }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("닫기") } },
-    )
+        }
+    }
 }
 
 @Composable
@@ -529,12 +680,12 @@ fun RecordingHomeScreen(state: AppUiState, viewModel: AppViewModel, padding: Pad
         if (granted) consent = true
         else viewModel.recordingPermissionDenied()
     }
-    Column(
-        Modifier.fillMaxSize().padding(padding).statusBarsPadding().padding(horizontal = 22.dp, vertical = 18.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp),
-    ) {
-        SimpleProfileHeader("진료 녹음")
-        Spacer(Modifier.height(4.dp))
+    Column(Modifier.fillMaxSize().padding(padding).statusBarsPadding().background(Color.White)) {
+        MainTopBar("진료녹음")
+        Column(
+            Modifier.fillMaxWidth().weight(1f).padding(horizontal = 20.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
+        ) {
         Text("녹음 파일", style = MaterialTheme.typography.titleLarge)
         if (latest == null) {
             Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = SurfaceSoft)) {
@@ -564,37 +715,48 @@ fun RecordingHomeScreen(state: AppUiState, viewModel: AppViewModel, padding: Pad
         }
         Spacer(Modifier.weight(1f))
         Text("녹음 전 의료진에게 알리고 동의를 확인해 주세요.", color = Muted, style = MaterialTheme.typography.bodyMedium)
+        }
     }
     if (consent) {
-        AlertDialog(
-            onDismissRequest = { consent = false },
-            title = { Text("민감정보 처리 및 분석 동의") },
-            text = { Text("진료 음성에는 민감한 의료정보가 포함될 수 있습니다. 저장과 전사·요약 분석을 위해 서버 및 설정한 모델 제공자에 전송됩니다. 의료진의 녹음 동의도 확인했습니다.") },
-            confirmButton = { Button(onClick = { consent = false; if (viewModel.startRecording()) nav.navigate(Routes.ACTIVE_RECORDING) }) { Text("동의하고 녹음") } },
-            dismissButton = { TextButton(onClick = { consent = false }) { Text("취소") } },
+        AppConfirmDialog(
+            title = "민감정보 처리 및 분석 동의",
+            message = "진료 음성에는 민감한 의료정보가 포함될 수 있습니다.\n저장과 전사·요약 분석을 위해 서버 및 설정한 모델 제공자에 전송됩니다.\n의료진의 녹음 동의도 확인했습니다.",
+            confirmText = "동의하고 녹음",
+            onDismiss = { consent = false },
+            onConfirm = { consent = false; if (viewModel.startRecording()) nav.navigate(Routes.ACTIVE_RECORDING) },
+            confirmWeight = 1.65f,
         )
     }
 }
 
 @Composable
-fun ActiveRecordingScreen(state: AppUiState, viewModel: AppViewModel, nav: NavHostController) {
+fun ActiveRecordingScreen(state: AppUiState, viewModel: AppViewModel, nav: NavHostController, scaffoldPadding: PaddingValues) {
     val recording = state.recording
     var saveDialog by remember { mutableStateOf(false) }
     DisposableEffect(viewModel) {
         onDispose { viewModel.stopRecordingIfActive() }
     }
-    Column(Modifier.fillMaxSize().statusBarsPadding().padding(horizontal = 22.dp, vertical = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        BackTitle("진료 녹음", nav)
-        Spacer(Modifier.height(48.dp))
-        Text(formatElapsed(recording.elapsedMs), style = MaterialTheme.typography.headlineLarge, color = Primary)
-        Spacer(Modifier.height(34.dp))
-        Box(
-            Modifier.fillMaxWidth().height(210.dp).clip(RoundedCornerShape(2.dp)).background(Color(0xFFF5F5F5)).padding(horizontal = 8.dp),
-            contentAlignment = Alignment.Center,
+    Column(
+        Modifier.fillMaxSize().statusBarsPadding()
+            .padding(bottom = scaffoldPadding.calculateBottomPadding())
+            .navigationBarsPadding().imePadding(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) { BackTitle("진료 녹음", nav) }
+        Column(
+            Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 22.dp, vertical = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            RecordingWaveform(viewModel, Modifier.fillMaxWidth().height(150.dp))
-            Box(Modifier.width(1.dp).fillMaxHeight().background(Color(0xFFFF9C9C)))
-        }
+            Spacer(Modifier.height(24.dp))
+            Text(formatElapsed(recording.elapsedMs), style = MaterialTheme.typography.headlineLarge, color = Primary)
+            Spacer(Modifier.height(28.dp))
+            Box(
+                Modifier.fillMaxWidth().height(210.dp).clip(RoundedCornerShape(2.dp)).background(Color(0xFFF5F5F5)).padding(horizontal = 8.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                RecordingWaveform(viewModel, Modifier.fillMaxWidth().height(150.dp))
+                Box(Modifier.width(1.dp).fillMaxHeight().background(Color(0xFFFF9C9C)))
+            }
         val statusText = when {
             recording.finalizing -> "녹음 파일 마무리 중"
             recording.paused -> "일시정지됨"
@@ -610,7 +772,10 @@ fun ActiveRecordingScreen(state: AppUiState, viewModel: AppViewModel, nav: NavHo
         )
         recording.error?.let { Text(it, color = Danger, style = MaterialTheme.typography.bodyMedium) }
         recording.inputWarning?.let { Text(it, color = Warning, style = MaterialTheme.typography.bodyMedium) }
-        Spacer(Modifier.weight(1f))
+            Spacer(Modifier.height(24.dp))
+        }
+        Surface(color = Color.White, shadowElevation = 4.dp) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 14.dp)) {
         if (recording.active) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = {}, modifier = Modifier.size(58.dp)) { Icon(Icons.Default.Menu, contentDescription = "녹음 메뉴", tint = Ink) }
@@ -633,7 +798,8 @@ fun ActiveRecordingScreen(state: AppUiState, viewModel: AppViewModel, nav: NavHo
                 Text("녹음 파일 저장")
             }
         }
-        Spacer(Modifier.height(24.dp))
+            }
+        }
     }
     if (saveDialog) RecordingSaveDialog(
         duration = recording.elapsedMs,
@@ -740,8 +906,7 @@ private fun RecordTypeCard(title: String, subtitle: String, selected: Boolean, m
 
 @Composable
 fun RecordingFilesScreen(state: AppUiState, viewModel: AppViewModel, nav: NavHostController) {
-    LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(22.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        item { BackTitle("진료 녹음", nav) }
+    FixedBackHeaderScreen("진료 녹음", nav, contentPadding = PaddingValues(22.dp), verticalSpacing = 16.dp) {
         item { Text("녹음 파일", style = MaterialTheme.typography.titleLarge) }
         when (val consultations = state.consultations) {
             LoadState.Loading, LoadState.Idle -> item { LoadingCard("녹음 목록을 불러오는 중입니다.") }
@@ -781,8 +946,7 @@ private fun RecordingFileCard(consultation: Consultation, onClick: () -> Unit) {
 fun RecordingDetailScreen(state: AppUiState, id: String, viewModel: AppViewModel, nav: NavHostController) {
     val consultation = (state.consultations as? LoadState.Content)?.value?.firstOrNull { it.id == id }
     var tab by remember { mutableIntStateOf(0) }
-    LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(22.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { BackTitle(consultation?.title ?: "음성 기록", nav) }
+    FixedBackHeaderScreen(consultation?.title ?: "음성 기록", nav, contentPadding = PaddingValues(22.dp), verticalSpacing = 12.dp) {
         if (consultation == null) item { EmptyCard("기록을 찾을 수 없습니다.") } else {
             item { AssistChip(onClick = {}, label = { Text("진료 기록") }, colors = AssistChipDefaults.assistChipColors(containerColor = Color(0xFFF0F7FF))) }
             item {
@@ -835,17 +999,22 @@ fun RecordingDetailScreen(state: AppUiState, id: String, viewModel: AppViewModel
 
 @Composable
 fun RecordsScreen(state: AppUiState, padding: PaddingValues, nav: NavHostController) {
-    ScreenColumn(padding) {
-        Text("기록", style = MaterialTheme.typography.headlineMedium)
-        Text("저장한 동시복용 결과와 진료 녹음을 한곳에서 확인합니다.", color = Muted)
+    Column(Modifier.fillMaxSize().padding(padding).statusBarsPadding().background(Color.White)) {
+        MainTopBar("기록")
+        Column(
+            Modifier.fillMaxWidth().weight(1f).padding(horizontal = 20.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+        Text("저장한 복용약 확인 결과와 진료 녹음을 한곳에서 확인합니다.", color = Muted)
         Card(Modifier.fillMaxWidth().clickable { nav.navigate(Routes.RECORDING_FILES) }, shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = SurfaceSoft)) {
             Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.GraphicEq, null, tint = Primary); Column(Modifier.weight(1f).padding(start = 14.dp)) { Text("진료 녹음 기록", fontWeight = FontWeight.Bold); Text("전사, 요약, 분석 상태", color = Muted) }; Icon(Icons.Default.ChevronRight, null)
             }
         }
         val saved = (state.interaction as? LoadState.Content)?.value?.saved == true
-        if (saved) InfoCard("저장된 동시복용 결과", listOf("상태" to "최근 분석 결과 저장됨", "주의" to "근거와 데이터 기준일을 함께 보관"))
-        else EmptyCard("아직 저장된 동시복용 결과가 없습니다.")
+        if (saved) InfoCard("저장된 복용약 확인 결과", listOf("상태" to "최근 분석 결과 저장됨", "주의" to "근거와 데이터 기준일을 함께 보관"))
+        else EmptyCard("아직 저장된 복용약 확인 결과가 없습니다.")
+        }
     }
 }
 
@@ -860,7 +1029,7 @@ fun ChatScreen(state: AppUiState, viewModel: AppViewModel, nav: NavHostControlle
     Column(Modifier.fillMaxSize().statusBarsPadding().imePadding().background(Color.White)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = { nav.popBackStack() }, modifier = Modifier.size(48.dp)) { Icon(Icons.Default.ArrowBack, "뒤로가기", modifier = Modifier.size(30.dp)) }
-            Text("메디봇", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(start = 6.dp))
+            Text("메디봇", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(start = 6.dp))
         }
         LazyColumn(
             Modifier.weight(1f).fillMaxWidth(),

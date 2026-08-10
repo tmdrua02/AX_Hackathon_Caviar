@@ -101,19 +101,11 @@ fun SupplementInteractionResultScreen(
     viewModel: AppViewModel,
     nav: NavHostController,
 ) {
-    LazyColumn(
-        modifier = Modifier.fillMaxSize().statusBarsPadding(),
+    FixedBackHeaderScreen(
+        title = "약–건강기능식품 병용 결과",
+        nav = nav,
         contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        item {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { nav.popBackStack() }, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.Default.ArrowBack, contentDescription = "뒤로가기")
-                }
-                Text("약–건강기능식품 병용 결과", style = MaterialTheme.typography.titleLarge)
-            }
-        }
         when (val result = state.supplementInteraction) {
             LoadState.Idle -> item { SupplementEmptyCard("아직 실행한 병용 분석이 없습니다.") }
             LoadState.Loading -> item { SupplementLoadingCard("공식 제품·성분과 검수 근거를 확인하는 중입니다.") }
