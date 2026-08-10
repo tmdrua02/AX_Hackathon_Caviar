@@ -1,0 +1,198 @@
+package com.haneul.medassist.data
+
+import android.content.ContentResolver
+import android.net.Uri
+import com.haneul.medassist.BuildConfig
+import com.haneul.medassist.di.MainHttpClient
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.asRequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.File
+import java.time.Instant
+import java.util.UUID
+import javax.inject.Inject
+import javax.inject.Singleton
+
+@Singleton
+class MedAssistRepository @Inject constructor(
+    private val api: ApiService,
+    private val database: MedAssistDatabase,
+    @MainHttpClient private val client: OkHttpClient,
+    private val json: Json,
+    private val supplementInteractionRemoteDataSource: SupplementInteractionRemoteDataSource,
+    private val drugInteractionRemoteDataSource: DrugInteractionRemoteDataSource,
+) {
+    suspend fun home(): LoadState<HomeResponse> = try {
+        val remote = api.home()
+        database.medicationDao().replace(remote.todayMedications.map { it.toCache() })
+        LoadState.Content(remote)
+    } catch (_: Exception) {
+        val cached = database.medicationDao().all()
+        if (cached.isNotEmpty()) {
+            val demo = demoHome()
+            LoadState.Content(demo.copy(todayMedications = cached.map { it.toMedication() }), offline = true)
+        } else LoadState.Content(demoHome(), offline = true)
+    }
+
+    suspend fun medications(): List<Medication> = runCatching { api.medications() }
+        .getOrElse {
+            val home = demoHome()
+            home.todayMedications + Medication(
+                "33333333-3333-3333-3333-333333333333", "오메가3 데모", ProductType.HEALTH_SUPPLEMENT,
+                ingredients = listOf(Ingredient("EPA 및 DHA", "omega3")), dose = "1캡슐", time = "13:00", timing = "식후",
+            )
+        }
+
+    suspend fun setDose(medication: Medication, taken: Boolean): Result<Medication> = runCatching {
+        api.doseLog(
+            medication.id,
+            DoseLogRequest(Instant.now().toString(), if (taken) "TAKEN" else "PENDING",
+                if (taken) Instant.now().toString() else null, medication.version),
+        )
+    }
+
+    suspend fun searchSupplementProducts(query: String): Result<SupplementProductSearchResponse> =
+        supplementInteractionRemoteDataSource.searchSupplements(query)
+
+    suspend fun searchDrugProducts(query: String): Result<DrugProductSearchResponse> =
+        supplementInteractionRemoteDataSource.searchDrugs(query)
+
+    suspend fun checkSupplementInteraction(
+        medicationProductCode: String,
+        supplementStatementNo: String,
+    ): Result<SupplementInteractionCheckResponse> =
+        supplementInteractionRemoteDataSource.check(medicationProductCode, supplementStatementNo)
+
+    suspend fun createDraft(front: Uri, back: Uri, resolver: ContentResolver, ocrText: String): PrescriptionDraft =
+        runCatching {
+            val frontFile = copyToTemp(front, resolver, "front")
+            val backFile = copyToTemp(back, resolver, "back")
+            api.createDraft(
+                MultipartBody.Part.createFormData("frontImage", frontFile.name, frontFile.asRequestBody("image/jpeg".toMediaType())),
+                MultipartBody.Part.createFormData("backImage", backFile.name, backFile.asRequestBody("image/jpeg".toMediaType())),
+                ocrText.toRequestBody("text/plain".toMediaType()),
+            )
+        }.getOrElse { demoDraft() }
+
+    suspend fun confirmDraft(draft: PrescriptionDraft): Medication = runCatching {
+        val updated = api.updateDraft(
+            draft.id,
+            DraftUpdate(draft.productName, draft.dose, draft.timesPerDay, draft.days, draft.timing,
+                draft.productCode, draft.manufacturer, draft.ingredients),
+        )
+        api.confirmDraft(updated.id)
+    }.getOrElse {
+        Medication(
+            id = "local-new-medication",
+            name = draft.productName,
+            productType = ProductType.OTC_DRUG,
+            productCode = draft.productCode,
+            manufacturer = draft.manufacturer,
+            ingredients = draft.ingredients,
+            dose = draft.dose,
+            time = "09:00",
+            timing = draft.timing,
+        )
+    }
+
+    suspend fun createCheck(): Accepted =
+        Accepted(UUID.randomUUID().toString(), UUID.randomUUID().toString(), "QUEUED")
+
+    suspend fun check(added: Medication, existing: List<Medication>): InteractionCheck {
+        val addedCode = added.productCode?.trim().orEmpty()
+        require(addedCode.isNotBlank()) {
+            "새로 추가한 약의 공식 품목기준코드가 없어 성분·DUR 분석을 시작할 수 없습니다."
+        }
+        val officialExistingCodes = existing
+            .filter { it.productType != ProductType.HEALTH_SUPPLEMENT }
+            .mapNotNull { it.productCode?.trim()?.takeIf(String::isNotBlank) }
+            .distinct()
+        val response = if (officialExistingCodes.isEmpty()) null else {
+            drugInteractionRemoteDataSource.check(addedCode, officialExistingCodes).getOrThrow()
+        }
+        return DrugInteractionUiMapper.map(response, added, existing)
+    }
+
+    suspend fun saveCheck(check: InteractionCheck): InteractionCheck = check.copy(saved = true)
+
+    suspend fun consultations(): Result<List<Consultation>> = runCatching { api.consultations() }
+
+    suspend fun uploadRecording(file: File, title: String, hospital: String, durationMs: Long): Result<Accepted> = runCatching {
+        api.uploadConsultation(
+            MultipartBody.Part.createFormData("audio", file.name, file.asRequestBody("audio/mp4".toMediaType())),
+            title.toRequestBody("text/plain".toMediaType()),
+            hospital.toRequestBody("text/plain".toMediaType()),
+            Instant.now().toString().toRequestBody("text/plain".toMediaType()),
+            durationMs.toString().toRequestBody("text/plain".toMediaType()),
+            UUID.randomUUID().toString(),
+        )
+    }
+
+    suspend fun retryConsultation(id: String): Result<Accepted> = runCatching { api.retryConsultation(id) }
+
+    suspend fun chat(message: String, officialContext: String?, onDelta: (String) -> Unit) = withContext(Dispatchers.IO) {
+        try {
+            val session = api.createChat()
+            val accepted = api.sendMessage(session.id, ChatMessageRequest(message, officialContext))
+            val request = Request.Builder().url(BuildConfig.API_BASE_URL.removeSuffix("/") + accepted.streamUrl).build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) error("채팅 서버 오류")
+                response.body?.source()?.let { source ->
+                    while (!source.exhausted()) {
+                        val line = source.readUtf8Line() ?: break
+                        if (line.startsWith("data:")) {
+                            val payload = line.removePrefix("data:").trim()
+                            runCatching {
+                                json.parseToJsonElement(payload).jsonObject["text"]?.jsonPrimitive?.content
+                            }.getOrNull()?.let(onDelta)
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            onDelta(localChat(message))
+        }
+    }
+
+    private fun copyToTemp(uri: Uri, resolver: ContentResolver, prefix: String): File {
+        val file = File.createTempFile(prefix, ".jpg")
+        resolver.openInputStream(uri).use { input -> file.outputStream().use { output -> input?.copyTo(output) } }
+        return file
+    }
+
+    private fun Medication.toCache() = CachedMedication(id, name, productType.name, dose, time, timing, taken, version)
+    private fun CachedMedication.toMedication() = Medication(id, name, ProductType.valueOf(productType),
+        dose = dose, time = time, timing = timing, taken = taken, version = version)
+
+    private fun demoConsultation(): Consultation {
+        val first = TranscriptSegment("segment-1", "의사", 0, 8200, "어디가 가장 불편해서 오셨어요?")
+        val second = TranscriptSegment("segment-2", "환자", 8400, 18300, "어제부터 목이 따갑고 미열이 있었어요.")
+        val third = TranscriptSegment("segment-3", "의사", 19000, 31000, "물을 충분히 드시고 증상이 심해지면 다시 내원하세요.")
+        return Consultation(
+            "44444444-4444-4444-4444-444444444444", "감기 증상 진료", "하늘내과(데모)",
+            "2026-08-03T01:30:00Z", 31_000, "SUCCEEDED", listOf(first, second, third),
+            ConsultationSummary(
+                "목 불편감과 미열에 관해 상담한 데모 진료 기록입니다.",
+                listOf(SummaryItem("목 따가움과 미열", listOf(second.id))), emptyList(), emptyList(),
+                listOf(SummaryItem("증상이 심해지면 재내원", listOf(third.id))),
+                listOf(SummaryItem("화자 구분은 AI 추정이므로 원음 확인 필요", listOf(first.id, second.id))),
+            ),
+        )
+    }
+
+    private fun localChat(message: String): String {
+        val emergencies = listOf("흉통", "호흡곤란", "숨을 못", "의식저하", "심한 알레르기")
+        if (emergencies.any(message::contains)) {
+            return "지금 즉시 119에 연락하거나 가까운 응급실로 가세요. 이 채팅으로 평가를 기다리지 마세요."
+        }
+        return "결론: 현재 질문만으로 약물 안전성을 확인할 수 없습니다.\n확인된 근거: 공식 상호작용 근거가 연결되지 않았습니다.\n할 일: 제품명과 성분을 확인한 뒤 의사·약사에게 상담하세요."
+    }
+}

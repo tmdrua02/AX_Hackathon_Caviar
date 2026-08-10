@@ -1,0 +1,65 @@
+spring:
+  config:
+    import: optional:file:.env[.properties],optional:file:../.env[.properties],optional:file:server/.env[.properties]
+  application:
+    name: med-assist-server
+  profiles:
+    default: mock
+  servlet:
+    multipart:
+      max-file-size: 30MB
+      max-request-size: 32MB
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+server:
+  port: 8080
+  error:
+    include-message: never
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+logging:
+  level:
+    org.springframework.web: INFO
+    org.springframework.boot: INFO
+    org.hibernate: INFO
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+app:
+  storage-root: ${MEDASSIST_STORAGE_ROOT:./server/uploads}
+  openai:
+    api-key: ${OPENAI_API_KEY:}
+    chat-model: ${OPENAI_CHAT_MODEL:gpt-4o-mini}
+    transcription-model: ${OPENAI_TRANSCRIPTION_MODEL:gpt-4o-mini-transcribe}
+    summary-model: ${OPENAI_SUMMARY_MODEL:gpt-4o-mini}
+    monthly-token-budget: 100000
+  public-data-key: ${PUBLIC_DATA_SERVICE_KEY:}
+
+---
+spring:
+  config:
+    activate:
+      on-profile: mock
+  datasource:
+    url: jdbc:h2:mem:medassist;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH
+    username: sa
+    password:
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+
+---
+spring:
+  config:
+    activate:
+      on-profile: local,prod
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/medassist}
+    username: ${DATABASE_USERNAME:medassist}
+    password: ${DATABASE_PASSWORD:medassist-local-only}

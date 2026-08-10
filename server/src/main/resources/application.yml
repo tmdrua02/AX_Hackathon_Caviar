@@ -1,0 +1,83 @@
+spring:
+  config:
+    import: optional:file:.env[.properties],optional:file:../.env[.properties],optional:file:server/.env[.properties]
+  application:
+    name: med-assist-server
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+  profiles:
+    default: mock
+  servlet:
+    multipart:
+      max-file-size: ${UPLOAD_MAX_FILE_SIZE:30MB}
+      max-request-size: ${UPLOAD_MAX_REQUEST_SIZE:32MB}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+server:
+  port: ${SERVER_PORT:8080}
+  shutdown: graceful
+  error:
+    include-message: never
+    include-stacktrace: never
+    include-binding-errors: never
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+logging:
+  level:
+    org.springframework.web: INFO
+    org.springframework.boot: INFO
+    org.hibernate: INFO
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+app:
+  storage-root: ${MEDASSIST_STORAGE_ROOT:./server/uploads}
+  backend:
+    base-url: ${BACKEND_BASE_URL:http://localhost:8081}
+  processing:
+    core-pool-size: ${AI_CORE_POOL_SIZE:1}
+    max-pool-size: ${AI_MAX_POOL_SIZE:2}
+    queue-capacity: ${AI_QUEUE_CAPACITY:8}
+    max-attempts: ${AI_MAX_ATTEMPTS:2}
+    retry-backoff-ms: ${AI_RETRY_BACKOFF_MS:1000}
+  openai:
+    api-key: ${OPENAI_API_KEY:}
+    chat-model: ${OPENAI_CHAT_MODEL:gpt-4o-mini}
+    transcription-model: ${OPENAI_TRANSCRIPTION_MODEL:gpt-4o-mini-transcribe}
+    summary-model: ${OPENAI_SUMMARY_MODEL:gpt-4o-mini}
+    monthly-token-budget: 100000
+  public-data-key: ${PUBLIC_DATA_SERVICE_KEY:}
+
+---
+spring:
+  config:
+    activate:
+      on-profile: mock
+  datasource:
+    url: jdbc:h2:mem:medassist;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH
+    username: sa
+    password:
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+
+---
+spring:
+  config:
+    activate:
+      on-profile: local
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/medassist}
+    username: ${DATABASE_USERNAME:medassist}
+    password: ${DATABASE_PASSWORD:medassist-local-only}

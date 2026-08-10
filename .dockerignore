@@ -1,0 +1,17 @@
+.git
+.github
+.idea
+.gradle
+.gradle-user-home
+**/.gradle
+**/build
+**/bin
+**/.env
+.env
+backups
+**/uploads
+backend
+*.apk
+*.aab
+local.properties
+.DS_Store
