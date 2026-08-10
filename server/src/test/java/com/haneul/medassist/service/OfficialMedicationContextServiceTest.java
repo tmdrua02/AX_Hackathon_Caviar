@@ -47,7 +47,7 @@ class OfficialMedicationContextServiceTest {
         String prompt = "타이레놀정500밀리그람과 부루펜정200밀리그램을 함께 먹어도 돼?";
         when(openAi.extractMedicationQueries(prompt)).thenReturn(new OpenAiGateway.MedicationQueryExtraction(
                 true,
-                List.of("타이레놀정500밀리그람", "부루펜정200밀리그램"),
+                List.of("타이레놀정500밀리그람", "아세트아미노펜", "부루펜정200밀리그램", "이부프로펜"),
                 List.of()));
         var service = new OfficialMedicationContextService(
                 openAi, new ObjectMapper(), "http://127.0.0.1:" + backend.getAddress().getPort());

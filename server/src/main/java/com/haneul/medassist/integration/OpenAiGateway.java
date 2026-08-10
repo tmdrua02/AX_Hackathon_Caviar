@@ -80,6 +80,9 @@ public class OpenAiGateway {
                 함께 복용, 병용, 상호작용, 같이 먹어도 되는지 묻는 질문이면 interactionQuestion을 true로 한다.
                 medicationQueries에는 공공 의약품 검색에 사용할 수 있는 명칭을 사용자가 말한 그대로 넣고,
                 해열제·감기약·진통제처럼 특정 제품이나 성분을 확정할 수 없는 표현은 ambiguousTerms에 넣는다.
+                제품명 뒤 괄호에 적힌 성분은 그 제품의 설명이므로 별도 의약품으로 추가하지 않는다.
+                예를 들어 '타이레놀정500밀리그람(아세트아미노펜)과 부루펜정200밀리그램(이부프로펜)'은
+                medicationQueries 두 개만 반환한다.
                 사용자가 말하지 않은 제품명이나 성분을 추측하거나 보충하지 않는다. 중복은 제거한다.
                 """;
         JsonNode result = structuredResponse(

@@ -15,6 +15,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /** Resolves free-form medication questions to verified product codes before creating chat evidence. */
 @Service
@@ -49,6 +51,7 @@ public class OfficialMedicationContextService {
 
         List<String> queries = new ArrayList<>(new LinkedHashSet<>(extraction.medicationQueries().stream()
                 .map(String::trim).filter(value -> value.length() >= 2).toList()));
+        queries = removeParentheticalIngredientDuplicates(prompt, queries);
         if (queries.size() > MAX_MEDICATIONS) queries = queries.subList(0, MAX_MEDICATIONS);
         if (!extraction.ambiguousTerms().isEmpty() || queries.size() < 2) {
             return Resolution.direct(ambiguousAnswer(queries, extraction.ambiguousTerms()));
@@ -91,6 +94,13 @@ public class OfficialMedicationContextService {
         JsonNode exact = resolved.stream()
                 .filter(candidate -> compact(candidate.path("productName").asText()).equals(compactQuery))
                 .findFirst().orElse(null);
+        if (exact == null) {
+            exact = resolved.stream()
+                    .filter(candidate -> compact(candidate.path("productName").asText()).startsWith(compactQuery))
+                    .filter(candidate -> candidate.path("matchConfidence").asInt(0) >= 90
+                            || resolved.size() == 1 && candidate.path("matchConfidence").asInt(0) >= 70)
+                    .findFirst().orElse(null);
+        }
         if (exact == null && resolved.size() == 1 && resolved.getFirst().path("matchConfidence").asInt(0) >= 90) {
             exact = resolved.getFirst();
         }
@@ -208,6 +218,17 @@ public class OfficialMedicationContextService {
 
     private String compact(String value) {
         return value.toLowerCase(Locale.KOREAN).replaceAll("[^가-힣a-z0-9]", "");
+    }
+
+    private List<String> removeParentheticalIngredientDuplicates(String prompt, List<String> queries) {
+        List<String> parenthetical = new ArrayList<>();
+        Matcher matcher = Pattern.compile("\\(([^)]{2,100})\\)").matcher(prompt);
+        while (matcher.find()) parenthetical.add(compact(matcher.group(1)));
+        if (parenthetical.isEmpty()) return queries;
+        List<String> outside = queries.stream()
+                .filter(query -> parenthetical.stream().noneMatch(value -> value.contains(compact(query))))
+                .toList();
+        return outside.size() >= 2 ? new ArrayList<>(outside) : queries;
     }
 
     private record ProductSearch(String query, JsonNode candidates) {}
