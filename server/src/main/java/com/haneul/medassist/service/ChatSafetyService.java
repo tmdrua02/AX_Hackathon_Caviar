@@ -17,6 +17,8 @@ public class ChatSafetyService {
             근거가 없으면 안전하다고 추론하지 말고 확인할 수 없다고 답한다. 답변은 결론, 확인된 근거,
             사용자가 할 일 순서로 짧고 명확하게 작성한다. 심각한 증상이나 응급 신호가 언급되면 즉시 119 또는
             가까운 응급실 등 지역 응급 도움을 받도록 안내한다. 모든 의료 의사결정은 담당 의사·약사와 확인하도록 한다.
+            NO_KNOWN_ISSUE나 상호작용 미발견을 안전 또는 복용 허용으로 표현하지 말고, 공식 조회 범위 내
+            알려진 상호작용이 확인되지 않았다는 제한된 결과로만 설명한다.
             """;
     private static final List<String> EMERGENCY = List.of("흉통", "호흡곤란", "숨을 못", "의식", "실신", "심한 알레르기", "아나필락시스");
     private final ObjectProvider<OpenAiGateway> gateway;
