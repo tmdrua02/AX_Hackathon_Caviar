@@ -23,7 +23,7 @@
 
     @backendAuthorized {
         header X-Demo-Api-Key {$DEMO_API_TOKEN}
-        path /api/v1/drug-products /api/v1/drug-products/* /api/v1/supplement-products /api/v1/supplement-products/* /api/v1/supplement-interaction-checks /api/v1/supplement-interaction-checks/*
+        path /api/v1/drug-products /api/v1/drug-products/* /api/v1/drug-interaction-checks /api/v1/drug-interaction-checks/* /api/v1/supplement-products /api/v1/supplement-products/* /api/v1/supplement-interaction-checks /api/v1/supplement-interaction-checks/*
     }
     handle @backendAuthorized {
         reverse_proxy backend:8081

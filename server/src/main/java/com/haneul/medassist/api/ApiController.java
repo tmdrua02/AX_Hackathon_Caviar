@@ -116,7 +116,7 @@ public class ApiController {
         validateAudio(audio);
         if (title.isBlank() || title.length() > 120) throw new IllegalArgumentException("진료 기록 제목을 확인해 주세요.");
         long parsedDuration = Long.parseLong(durationMs);
-        if (parsedDuration <= 0 || parsedDuration > 12 * 60 * 60 * 1000L) {
+        if (parsedDuration < 3_000 || parsedDuration > 12 * 60 * 60 * 1000L) {
             throw new IllegalArgumentException("녹음 길이를 확인해 주세요.");
         }
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(consultations.create(audio, key, title, hospitalName,

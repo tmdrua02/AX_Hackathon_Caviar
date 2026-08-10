@@ -3,6 +3,10 @@
 **/.gradle/
 **/build/
 **/bin/
+**/dist/
+**/node_modules/
+**/.next/
+**/.wrangler/
 /tmp/
 **/uploads/
 backups/
