@@ -3,7 +3,7 @@ package com.haneul.medassist.data
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class Counts(val total: Int, val prescriptions: Int, val supplements: Int)
+data class Counts(val total: Int, val prescriptions: Int, val supplements: Int, val otc: Int = 0)
 
 @Serializable
 data class Ingredient(
@@ -31,6 +31,11 @@ data class Medication(
     val timing: String? = null,
     val taken: Boolean = false,
     val version: Long = 0,
+    val startDate: String? = null,
+    val endDate: String? = null,
+    val timesPerDay: Int? = null,
+    val doseValue: Double? = null,
+    val doseUnit: String? = null,
 )
 
 @Serializable
