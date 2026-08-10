@@ -35,11 +35,19 @@ public class DemoStore {
     @PostConstruct
     void initialize() {
         restore();
-        if (medications.isEmpty()) {
-            putMedication("11111111-1111-1111-1111-111111111111", "타이레놀", ProductType.OTC_DRUG,
-                    "아세트아미노펜", "acetaminophen", "1정", "09:00", "식후", false);
-            putMedication("22222222-2222-2222-2222-222222222222", "해열 시럽 A", ProductType.PRESCRIPTION_DRUG,
-                    "이부프로펜", "ibuprofen", "10mL", "20:00", "식후", true);
+        ensureOfficialDemoMedication(
+                "11111111-1111-1111-1111-111111111111",
+                "타이레놀정500밀리그람(아세트아미노펜)", ProductType.OTC_DRUG,
+                "202106092", "켄뷰코리아판매유한회사",
+                "아세트아미노펜", "acetaminophen", "M040353", 500.0, "밀리그램",
+                "1정", "09:00", "식후", false);
+        ensureOfficialDemoMedication(
+                "22222222-2222-2222-2222-222222222222",
+                "어린이부루펜시럽(이부프로펜)", ProductType.PRESCRIPTION_DRUG,
+                "198601920", "삼일제약(주)",
+                "이부프로펜", "ibuprofen", "M051259", 2.0, "그램",
+                "10mL", "20:00", "식후", true);
+        if (!medications.containsKey(UUID.fromString("33333333-3333-3333-3333-333333333333"))) {
             putMedication("33333333-3333-3333-3333-333333333333", "오메가3 데모", ProductType.HEALTH_SUPPLEMENT,
                     "EPA 및 DHA", "omega3", "1캡슐", "13:00", "식후", false);
         }
@@ -68,6 +76,23 @@ public class DemoStore {
         Medication medication = new Medication(uuid, name, type, "DEMO-" + id.substring(0, 4),
                 "데모 제조사", true, List.of(new Ingredient(ingredient, normalized, "MOCK", null, null)),
                 dose, time, timing, taken, 0);
+        medications.put(uuid, medication);
+        persistence.put("medication", id, medication);
+    }
+
+    private void ensureOfficialDemoMedication(
+            String id, String name, ProductType type, String productCode, String manufacturer,
+            String ingredient, String normalized, String providerCode, Double amount, String unit,
+            String dose, String time, String timing, boolean defaultTaken) {
+        UUID uuid = UUID.fromString(id);
+        Medication current = medications.get(uuid);
+        if (current != null && current.productCode() != null && !current.productCode().startsWith("DEMO-")) return;
+        Medication medication = new Medication(
+                uuid, name, type, productCode, manufacturer, true,
+                List.of(new Ingredient(ingredient, normalized, providerCode, amount, unit)),
+                dose, time, timing,
+                current != null ? current.taken() : defaultTaken,
+                current != null ? current.version() : 0);
         medications.put(uuid, medication);
         persistence.put("medication", id, medication);
     }

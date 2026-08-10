@@ -2,6 +2,8 @@ package com.haneul.medassist.di
 
 import android.content.Context
 import androidx.room.Room
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import com.haneul.medassist.BuildConfig
 import com.haneul.medassist.data.ApiService
 import com.haneul.medassist.data.MedAssistDatabase
@@ -71,8 +73,8 @@ object AppModule {
     private fun baseHttpClient(): OkHttpClient.Builder = OkHttpClient.Builder()
         .addInterceptor { chain ->
             val request = chain.request().newBuilder().apply {
-                if (BuildConfig.DEMO_API_TOKEN.isNotBlank()) {
-                    header("X-Demo-Api-Key", BuildConfig.DEMO_API_TOKEN)
+                validDemoApiToken(BuildConfig.DEMO_API_TOKEN)?.let { token ->
+                    header("X-Demo-Api-Key", token)
                 }
             }.build()
             chain.proceed(request)
@@ -83,6 +85,10 @@ object AppModule {
             redactHeader("X-Demo-Api-Key")
             redactHeader("X-Demo-User-Id")
         })
+
+    internal fun validDemoApiToken(value: String): String? = value.trim().takeIf { token ->
+        token.isNotEmpty() && token.all { it.code in 0x21..0x7E }
+    }
 
     @Provides
     @Singleton
@@ -103,5 +109,84 @@ object AppModule {
     @Provides
     @Singleton
     fun database(@ApplicationContext context: Context): MedAssistDatabase =
-        Room.databaseBuilder(context, MedAssistDatabase::class.java, "med-assist.db").build()
+        Room.databaseBuilder(context, MedAssistDatabase::class.java, "med-assist.db")
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+            .build()
+
+    private val MIGRATION_1_2 = object : Migration(1, 2) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """CREATE TABLE IF NOT EXISTS `medication_alarms` (
+                    `id` TEXT NOT NULL,
+                    `medicationId` TEXT NOT NULL,
+                    `medicationName` TEXT NOT NULL,
+                    `hour` INTEGER NOT NULL,
+                    `minute` INTEGER NOT NULL,
+                    `repeatDays` TEXT NOT NULL,
+                    `timing` TEXT NOT NULL,
+                    `soundEnabled` INTEGER NOT NULL,
+                    `soundName` TEXT NOT NULL,
+                    `vibrationEnabled` INTEGER NOT NULL,
+                    `enabled` INTEGER NOT NULL,
+                    PRIMARY KEY(`id`)
+                )""".trimIndent(),
+            )
+        }
+    }
+
+    private val MIGRATION_2_3 = object : Migration(2, 3) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """CREATE TABLE IF NOT EXISTS `medication_dose_records` (
+                    `alarmId` TEXT NOT NULL,
+                    `date` TEXT NOT NULL,
+                    `completed` INTEGER NOT NULL,
+                    `completedAt` INTEGER,
+                    PRIMARY KEY(`alarmId`, `date`)
+                )""".trimIndent(),
+            )
+        }
+    }
+
+    private val MIGRATION_3_4 = object : Migration(3, 4) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """CREATE TABLE IF NOT EXISTS `manual_medications` (
+                    `id` TEXT NOT NULL,
+                    `name` TEXT NOT NULL,
+                    `productType` TEXT NOT NULL,
+                    `ingredientDescription` TEXT NOT NULL,
+                    `active` INTEGER NOT NULL,
+                    PRIMARY KEY(`id`)
+                )""".trimIndent(),
+            )
+        }
+    }
+
+    private val MIGRATION_4_5 = object : Migration(4, 5) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE `manual_medications` ADD COLUMN `startDate` TEXT")
+            db.execSQL("ALTER TABLE `manual_medications` ADD COLUMN `endDate` TEXT")
+            db.execSQL("ALTER TABLE `manual_medications` ADD COLUMN `intakeTiming` TEXT")
+            db.execSQL("ALTER TABLE `manual_medications` ADD COLUMN `timesPerDay` INTEGER")
+            db.execSQL("ALTER TABLE `manual_medications` ADD COLUMN `doseValue` REAL")
+            db.execSQL("ALTER TABLE `manual_medications` ADD COLUMN `doseUnit` TEXT")
+        }
+    }
+
+    private val MIGRATION_5_6 = object : Migration(5, 6) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """CREATE TABLE IF NOT EXISTS `saved_interaction_checks` (
+                    `id` TEXT NOT NULL,
+                    `jobId` TEXT NOT NULL,
+                    `analyzedAt` TEXT NOT NULL,
+                    `selectedProductsJson` TEXT NOT NULL,
+                    `resultsJson` TEXT NOT NULL,
+                    `savedAt` INTEGER NOT NULL,
+                    PRIMARY KEY(`id`)
+                )""".trimIndent(),
+            )
+        }
+    }
 }

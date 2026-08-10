@@ -24,8 +24,12 @@ class ApiControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.greeting").value("안녕하세요, 하늘님"))
                 .andExpect(jsonPath("$.todayMedications.length()").value(2))
-                .andExpect(jsonPath("$.todayMedications[0].name").value("타이레놀"))
-                .andExpect(jsonPath("$.todayMedications[1].name").value("해열 시럽 A"))
+                .andExpect(jsonPath("$.todayMedications[0].name").value("타이레놀정500밀리그람(아세트아미노펜)"))
+                .andExpect(jsonPath("$.todayMedications[0].productCode").value("202106092"))
+                .andExpect(jsonPath("$.todayMedications[0].ingredients[0].providerCode").value("M040353"))
+                .andExpect(jsonPath("$.todayMedications[1].name").value("어린이부루펜시럽(이부프로펜)"))
+                .andExpect(jsonPath("$.todayMedications[1].productCode").value("198601920"))
+                .andExpect(jsonPath("$.todayMedications[1].ingredients[0].providerCode").value("M051259"))
                 .andExpect(jsonPath("$.disclaimer").value(org.hamcrest.Matchers.containsString("의사·약사")));
     }
 

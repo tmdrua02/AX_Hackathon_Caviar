@@ -7,6 +7,7 @@ import com.haneul.medassist.di.MainHttpClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.MediaType.Companion.toMediaType
@@ -42,14 +43,78 @@ class MedAssistRepository @Inject constructor(
         } else LoadState.Content(demoHome(), offline = true)
     }
 
-    suspend fun medications(): List<Medication> = runCatching { api.medications() }
-        .getOrElse {
+    suspend fun medications(): List<Medication> {
+        val primary = runCatching { api.medications() }.getOrElse {
             val home = demoHome()
             home.todayMedications + Medication(
                 "33333333-3333-3333-3333-333333333333", "오메가3 데모", ProductType.HEALTH_SUPPLEMENT,
                 ingredients = listOf(Ingredient("EPA 및 DHA", "omega3")), dose = "1캡슐", time = "13:00", timing = "식후",
             )
         }
+        val overrides = database.manualMedicationDao().all()
+        val hiddenIds = overrides.filterNot { it.active }.mapTo(hashSetOf()) { it.id }
+        val activeOverrides = overrides.filter { it.active }.map { it.toMedication() }
+        return (activeOverrides + primary.filterNot { it.id in hiddenIds }).distinctBy { it.id }
+    }
+
+    suspend fun addManualMedication(
+        name: String, productType: ProductType, ingredientDescription: String,
+        startDate: String?, endDate: String?, intakeTiming: String,
+        timesPerDay: Int, doseValue: Double, doseUnit: String,
+    ): Medication {
+        val medication = Medication(
+            id = "manual-${UUID.randomUUID()}",
+            name = name.trim(),
+            productType = productType,
+            ingredients = ingredientDescription.trim().takeIf { it.isNotBlank() }?.let {
+                listOf(Ingredient(displayName = it, normalizedName = it.lowercase()))
+            }.orEmpty(),
+            dose = "${doseValue.formatDose()}$doseUnit",
+            timing = intakeTiming,
+            startDate = startDate,
+            endDate = endDate,
+            timesPerDay = timesPerDay,
+            doseValue = doseValue,
+            doseUnit = doseUnit,
+        )
+        database.manualMedicationDao().upsert(
+            ManualMedicationEntity(
+                medication.id, medication.name, medication.productType.name, ingredientDescription.trim(), true,
+                startDate, endDate, intakeTiming, timesPerDay, doseValue, doseUnit,
+            ),
+        )
+        return medication
+    }
+
+    suspend fun updateMedication(original: Medication, name: String, productType: ProductType, ingredientDescription: String): Medication {
+        val updated = original.copy(
+            name = name.trim(),
+            productType = productType,
+            ingredients = ingredientDescription.trim().takeIf { it.isNotBlank() }?.let {
+                listOf(Ingredient(displayName = it, normalizedName = it.lowercase()))
+            }.orEmpty(),
+            active = true,
+        )
+        database.manualMedicationDao().upsert(
+            ManualMedicationEntity(
+                updated.id, updated.name, updated.productType.name, ingredientDescription.trim(), true,
+                updated.startDate, updated.endDate, updated.timing, updated.timesPerDay, updated.doseValue, updated.doseUnit,
+            ),
+        )
+        return updated
+    }
+
+    suspend fun deleteMedication(medication: Medication) {
+        database.manualMedicationDao().upsert(
+            ManualMedicationEntity(
+                medication.id,
+                medication.name,
+                medication.productType.name,
+                medication.ingredients.joinToString { it.displayName },
+                false,
+            ),
+        )
+    }
 
     suspend fun setDose(medication: Medication, taken: Boolean): Result<Medication> = runCatching {
         api.doseLog(
@@ -91,9 +156,9 @@ class MedAssistRepository @Inject constructor(
         api.confirmDraft(updated.id)
     }.getOrElse {
         Medication(
-            id = "local-new-medication",
+            id = "local-${UUID.randomUUID()}",
             name = draft.productName,
-            productType = ProductType.OTC_DRUG,
+            productType = ProductType.UNKNOWN,
             productCode = draft.productCode,
             manufacturer = draft.manufacturer,
             ingredients = draft.ingredients,
@@ -121,7 +186,42 @@ class MedAssistRepository @Inject constructor(
         return DrugInteractionUiMapper.map(response, added, existing)
     }
 
-    suspend fun saveCheck(check: InteractionCheck): InteractionCheck = check.copy(saved = true)
+    suspend fun checkSelected(selected: List<Medication>): InteractionCheck {
+        val snapshot = selected.filter { it.active }.distinctBy { it.id }
+        require(snapshot.size >= 2) { "분석할 활성 복용 제품을 2개 이상 선택해 주세요." }
+        val outcomes = InteractionAnalysisPlanner.officialDrugBatches(snapshot).map { (reference, comparisons) ->
+            val referenceCode = requireNotNull(reference.productCode).trim()
+            drugInteractionRemoteDataSource.check(
+                referenceCode,
+                comparisons.mapNotNull { it.productCode?.trim()?.takeIf(String::isNotBlank) },
+            ).fold(
+                onSuccess = { DrugInteractionUiMapper.BatchOutcome(reference, comparisons, response = it) },
+                onFailure = {
+                    DrugInteractionUiMapper.BatchOutcome(
+                        reference,
+                        comparisons,
+                        failureMessage = it.message ?: "공식 성분·DUR 서버에 연결할 수 없습니다.",
+                    )
+                },
+            )
+        }
+        return DrugInteractionUiMapper.mapSelected(snapshot, outcomes)
+    }
+
+    suspend fun saveCheck(check: InteractionCheck): InteractionCheck {
+        val saved = check.copy(saved = true)
+        database.savedInteractionCheckDao().upsert(
+            SavedInteractionCheckEntity(
+                id = saved.id,
+                jobId = saved.jobId,
+                analyzedAt = saved.analyzedAt,
+                selectedProductsJson = json.encodeToString(saved.analyzedMedications),
+                resultsJson = json.encodeToString(saved.results),
+                savedAt = System.currentTimeMillis(),
+            ),
+        )
+        return saved
+    }
 
     suspend fun consultations(): Result<List<Consultation>> = runCatching { api.consultations() }
 
@@ -171,6 +271,24 @@ class MedAssistRepository @Inject constructor(
     private fun Medication.toCache() = CachedMedication(id, name, productType.name, dose, time, timing, taken, version)
     private fun CachedMedication.toMedication() = Medication(id, name, ProductType.valueOf(productType),
         dose = dose, time = time, timing = timing, taken = taken, version = version)
+    private fun ManualMedicationEntity.toMedication() = Medication(
+        id = id,
+        name = name,
+        productType = ProductType.valueOf(productType),
+        active = active,
+        ingredients = ingredientDescription.takeIf { it.isNotBlank() }?.let {
+            listOf(Ingredient(displayName = it, normalizedName = it.lowercase()))
+        }.orEmpty(),
+        dose = doseValue?.let { "${it.formatDose()}${doseUnit.orEmpty()}" },
+        timing = intakeTiming,
+        startDate = startDate,
+        endDate = endDate,
+        timesPerDay = timesPerDay,
+        doseValue = doseValue,
+        doseUnit = doseUnit,
+    )
+
+    private fun Double.formatDose(): String = if (this % 1.0 == 0.0) toInt().toString() else toString()
 
     private fun demoConsultation(): Consultation {
         val first = TranscriptSegment("segment-1", "의사", 0, 8200, "어디가 가장 불편해서 오셨어요?")

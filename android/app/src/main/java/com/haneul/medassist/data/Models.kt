@@ -3,7 +3,7 @@ package com.haneul.medassist.data
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class Counts(val total: Int, val prescriptions: Int, val supplements: Int)
+data class Counts(val total: Int, val prescriptions: Int, val supplements: Int, val otc: Int = 0)
 
 @Serializable
 data class Ingredient(
@@ -31,6 +31,11 @@ data class Medication(
     val timing: String? = null,
     val taken: Boolean = false,
     val version: Long = 0,
+    val startDate: String? = null,
+    val endDate: String? = null,
+    val timesPerDay: Int? = null,
+    val doseValue: Double? = null,
+    val doseUnit: String? = null,
 )
 
 @Serializable
@@ -141,7 +146,13 @@ data class InteractionCheck(
     val coverage: Coverage,
     val saved: Boolean,
     val disclaimer: String,
+    val analyzedMedications: List<Medication> = emptyList(),
+    val analyzedAt: String = "",
 )
+
+enum class InteractionAnalysisPhase { IDLE, RUNNING, SUCCEEDED, PARTIAL, EMPTY, FAILED }
+
+enum class InteractionSavePhase { IDLE, SAVING, SAVED, FAILED }
 
 @Serializable
 data class TranscriptSegment(
@@ -202,13 +213,15 @@ fun demoHome() = HomeResponse(
     counts = Counts(3, 1, 1),
     todayMedications = listOf(
         Medication(
-            "11111111-1111-1111-1111-111111111111", "타이레놀", ProductType.OTC_DRUG,
-            ingredients = listOf(Ingredient("아세트아미노펜", "acetaminophen")),
+            "11111111-1111-1111-1111-111111111111", "타이레놀정500밀리그람(아세트아미노펜)", ProductType.OTC_DRUG,
+            productCode = "202106092", manufacturer = "켄뷰코리아판매유한회사",
+            ingredients = listOf(Ingredient("아세트아미노펜", "acetaminophen", "M040353", 500.0, "밀리그램")),
             dose = "1정", time = "09:00", timing = "식후",
         ),
         Medication(
-            "22222222-2222-2222-2222-222222222222", "해열 시럽 A", ProductType.PRESCRIPTION_DRUG,
-            ingredients = listOf(Ingredient("이부프로펜", "ibuprofen")),
+            "22222222-2222-2222-2222-222222222222", "어린이부루펜시럽(이부프로펜)", ProductType.PRESCRIPTION_DRUG,
+            productCode = "198601920", manufacturer = "삼일제약(주)",
+            ingredients = listOf(Ingredient("이부프로펜", "ibuprofen", "M051259", 2.0, "그램")),
             dose = "10mL", time = "20:00", timing = "식후", taken = true,
         ),
     ),
