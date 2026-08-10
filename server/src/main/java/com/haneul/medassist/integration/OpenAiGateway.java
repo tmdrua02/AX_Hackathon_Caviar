@@ -167,7 +167,10 @@ public class OpenAiGateway {
         writeField(output, boundary, "model", transcriptionModel);
         writeField(output, boundary, "response_format", "json");
         writeField(output, boundary, "language", "ko");
-        writeField(output, boundary, "prompt", "한국어 진료실 대화입니다. 의학 용어와 약 이름을 들린 그대로 정확히 기록하세요.");
+        writeField(output, boundary, "temperature", "0");
+        writeField(output, boundary, "chunking_strategy", "auto");
+        writeField(output, boundary, "include[]", "logprobs");
+        writeField(output, boundary, "prompt", "들리는 한국어를 그대로 옮기세요. 들리지 않는 내용은 추측하거나 보충하지 마세요.");
         output.write(("--" + boundary + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audio.m4a\"\r\n" +
                 "Content-Type: audio/mp4\r\n\r\n").getBytes(StandardCharsets.UTF_8));
         output.write(Files.readAllBytes(audio.toPath()));
@@ -214,7 +217,9 @@ public class OpenAiGateway {
                 반드시 '확인 필요'를 사용하고, 화자나 진단을 지어내지 않는다. 요약은 전체 요약, 주요 증상,
                 검사·진단, 처방 및 복용 안내, 추후 일정·주의사항, 확인 필요 항목으로 구성한다.
                 진단과 처방은 의료진이 실제로 말한 내용만 기록한다. evidenceIndexes는 dialogue의 0부터 시작하는
-                인덱스만 사용한다. 모든 결과는 한국어로 작성한다.
+                인덱스만 사용한다. dialogue의 각 text는 전사문의 연속된 원문을 그대로 복사해야 하며, 순서 변경,
+                바꿔 쓰기, 문장 보충을 하지 않는다. dialogue의 text를 모두 이어 붙이면 전사문과 같아야 한다.
+                모든 결과는 한국어로 작성한다.
                 """;
         return structuredResponse(summaryModel, "consultation_record", instructions,
                 "[진료 전사문]\n" + transcript, schema);

@@ -45,8 +45,8 @@ class RecordingQualityEvaluatorTest {
     }
 
     @Test
-    fun shortClipOnlyRequiresNonDigitalSilence() {
-        assertTrue(RecordingQualityEvaluator.isUsable(2_000, 0, 2_000, 100, 0))
+    fun rejectsClipsShorterThanMinimumRecordingDuration() {
+        assertFalse(RecordingQualityEvaluator.isUsable(2_000, 2_000, 0, 10_000, 0))
         assertFalse(RecordingQualityEvaluator.isUsable(2_000, 0, 2_000, 0, 0))
     }
 }

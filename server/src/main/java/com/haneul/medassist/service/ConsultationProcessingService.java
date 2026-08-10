@@ -167,9 +167,15 @@ public class ConsultationProcessingService {
             if (!openAi.isConfigured()) throw new OpenAiGateway.ProviderException("OPENAI_NOT_CONFIGURED", false);
             temporary = Files.createTempFile("medassist-consultation-", ".m4a");
             Files.write(temporary, audio(consultationId));
-            String rawTranscript = openAi.transcribe(temporary.toFile()).path("text").asText("").trim();
+            JsonNode transcription = openAi.transcribe(temporary.toFile());
+            String rawTranscript = transcription.path("text").asText("").trim();
             if (rawTranscript.isBlank()) throw new OpenAiGateway.ProviderException("TRANSCRIPTION_EMPTY", true);
+            ConsultationAiGuardrails.transcriptionFailure(transcription, consultation.durationMs())
+                    .ifPresent(code -> { throw new OpenAiGateway.ProviderException(code, false); });
             JsonNode result = openAi.analyzeConsultation(DemoStore.DEMO_USER, rawTranscript);
+            if (!ConsultationAiGuardrails.dialogueMatchesTranscript(rawTranscript, result.path("dialogue"))) {
+                throw new OpenAiGateway.ProviderException("SUMMARY_UNGROUNDED", false);
+            }
             List<TranscriptSegment> segments = toSegments(result.path("dialogue"), consultation.durationMs());
             ConsultationSummary summary = toSummary(result, segments);
             store.updateConsultation(consultationId, JobStatus.SUCCEEDED, segments, summary);
@@ -209,6 +215,9 @@ public class ConsultationProcessingService {
             case "MONTHLY_BUDGET_EXCEEDED" -> "서버에 설정된 OpenAI 사용 한도에 도달했습니다.";
             case "TRANSCRIPTION_FAILED" -> "녹음 파일을 음성 기록으로 변환하지 못했습니다.";
             case "TRANSCRIPTION_EMPTY" -> "녹음에서 분석할 수 있는 음성을 찾지 못했습니다.";
+            case "TRANSCRIPTION_LOW_CONFIDENCE" -> "음성이 불명확해 정확한 기록을 만들 수 없습니다. 조용한 환경에서 다시 녹음해 주세요.";
+            case "TRANSCRIPTION_IMPLAUSIBLE" -> "녹음이 너무 짧아 정확한 AI 기록을 만들 수 없습니다. 3초 이상 다시 녹음해 주세요.";
+            case "SUMMARY_UNGROUNDED" -> "AI가 원문에 없는 내용을 생성해 기록 저장을 중단했습니다. 다시 분석해 주세요.";
             case "SUMMARY_FAILED", "SUMMARY_RESPONSE_EMPTY" -> "음성 기록은 처리됐지만 진료 요약을 생성하지 못했습니다.";
             case "OPENAI_TIMEOUT_OR_NETWORK", "OPENAI_PROVIDER_ERROR" -> "OpenAI 서버 연결에 실패했습니다.";
             case "PROCESSING_INTERRUPTED" -> "서버 종료로 AI 처리가 중단되었습니다. 다시 시도해 주세요.";

@@ -16,6 +16,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 public class DemoStore {
     public static final UUID DEMO_USER = UUID.fromString("00000000-0000-0000-0000-000000000001");
+    private static final UUID LEGACY_DEMO_CONSULTATION = UUID.fromString("44444444-4444-4444-4444-444444444444");
     private final Map<UUID, Medication> medications = new ConcurrentHashMap<>();
     private final Map<UUID, PrescriptionDraft> drafts = new ConcurrentHashMap<>();
     private final Map<UUID, InteractionCheck> checks = new ConcurrentHashMap<>();
@@ -35,6 +36,7 @@ public class DemoStore {
     @PostConstruct
     void initialize() {
         restore();
+        removeLegacyDemoConsultation();
         ensureOfficialDemoMedication(
                 "11111111-1111-1111-1111-111111111111",
                 "타이레놀정500밀리그람(아세트아미노펜)", ProductType.OTC_DRUG,
@@ -51,7 +53,13 @@ public class DemoStore {
             putMedication("33333333-3333-3333-3333-333333333333", "오메가3 데모", ProductType.HEALTH_SUPPLEMENT,
                     "EPA 및 DHA", "omega3", "1캡슐", "13:00", "식후", false);
         }
-        if (consultations.isEmpty()) seedConsultation();
+    }
+
+    private void removeLegacyDemoConsultation() {
+        consultations.remove(LEGACY_DEMO_CONSULTATION);
+        audioObjects.remove(LEGACY_DEMO_CONSULTATION);
+        persistence.delete("consultation", LEGACY_DEMO_CONSULTATION.toString());
+        persistence.delete("audio", LEGACY_DEMO_CONSULTATION.toString());
     }
 
     private void restore() {
@@ -95,23 +103,6 @@ public class DemoStore {
                 current != null ? current.version() : 0);
         medications.put(uuid, medication);
         persistence.put("medication", id, medication);
-    }
-
-    private void seedConsultation() {
-        UUID cId = UUID.fromString("44444444-4444-4444-4444-444444444444");
-        UUID s1 = UUID.randomUUID();
-        UUID s2 = UUID.randomUUID();
-        var segments = List.of(
-                new TranscriptSegment(s1, "의사", 0, 8200, "어디가 가장 불편해서 오셨어요?"),
-                new TranscriptSegment(s2, "환자", 8400, 18300, "어제부터 목이 따갑고 미열이 있었어요."),
-                new TranscriptSegment(UUID.randomUUID(), "의사", 19000, 31000, "물을 충분히 드시고 증상이 심해지면 다시 내원하세요."));
-        var summary = new ConsultationSummary("목 불편감과 미열에 관해 상담한 데모 진료 기록입니다.",
-                List.of(new SummaryItem("목 따가움과 미열", List.of(s2))), List.of(), List.of(),
-                List.of(new SummaryItem("증상이 심해지면 재내원", List.of(segments.get(2).id()))),
-                List.of(new SummaryItem("화자 구분은 AI 추정이므로 원음 확인 필요", List.of(s1, s2))));
-        consultations.put(cId, new Consultation(cId, "감기 증상 진료", "하늘내과(데모)",
-                Instant.parse("2026-08-03T01:30:00Z"), 31_000, JobStatus.SUCCEEDED, segments, summary, null, null));
-        persistence.put("consultation", cId.toString(), consultations.get(cId));
     }
 
     public HomeResponse home() {
@@ -252,7 +243,11 @@ public class DemoStore {
         return saved;
     }
 
-    public List<Consultation> consultations() { return consultations.values().stream().toList(); }
+    public List<Consultation> consultations() {
+        return consultations.values().stream()
+                .sorted(Comparator.comparing(Consultation::consultedAt).reversed().thenComparing(Consultation::id))
+                .toList();
+    }
     public Consultation consultation(UUID id) {
         Consultation value = consultations.get(id);
         if (value == null) throw new NoSuchElementException("진료 기록을 찾을 수 없습니다.");
