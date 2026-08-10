@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.File
+import java.time.DayOfWeek
 import javax.inject.Inject
 
 data class RecordingUiState(
@@ -38,6 +39,8 @@ data class RecordingUiState(
 data class AppUiState(
     val home: LoadState<HomeResponse> = LoadState.Idle,
     val medications: List<Medication> = emptyList(),
+    val medicationAlarms: List<MedicationAlarm> = emptyList(),
+    val medicationDoseRecords: List<MedicationDoseRecord> = emptyList(),
     val selectedExisting: Set<String> = emptySet(),
     val frontPhoto: Uri? = null,
     val backPhoto: Uri? = null,
@@ -61,6 +64,7 @@ data class AppUiState(
 @HiltViewModel
 class AppViewModel @Inject constructor(
     private val repository: MedAssistRepository,
+    private val alarmRepository: MedicationAlarmRepository,
     private val ocr: OcrEngine,
     private val savedState: SavedStateHandle,
     @ApplicationContext private val context: Context,
@@ -82,7 +86,83 @@ class AppViewModel @Inject constructor(
     init {
         refreshHome()
         loadMedications()
+        observeMedicationAlarms()
+        observeMedicationDoseRecords()
         loadConsultations()
+    }
+
+    private fun observeMedicationAlarms() = viewModelScope.launch {
+        alarmRepository.observeAll().collect { alarms ->
+            _state.update { it.copy(medicationAlarms = alarms) }
+        }
+    }
+
+    private fun observeMedicationDoseRecords() = viewModelScope.launch {
+        alarmRepository.observeDoseRecords().collect { records ->
+            _state.update { it.copy(medicationDoseRecords = records) }
+        }
+    }
+
+    fun saveMedicationAlarm(
+        id: String?,
+        medicationId: String,
+        medicationName: String,
+        hour: Int,
+        minute: Int,
+        repeatDays: Set<DayOfWeek>,
+        timing: String,
+        soundEnabled: Boolean,
+        soundName: String,
+        vibrationEnabled: Boolean,
+        onSaved: () -> Unit,
+    ) = viewModelScope.launch {
+        val previous = id?.let { alarmRepository.find(it) }
+        val currentMedicationName = _state.value.medications
+            .firstOrNull { it.id == medicationId }
+            ?.name
+            ?: medicationName
+        alarmRepository.save(
+            MedicationAlarm(
+                id = previous?.id ?: java.util.UUID.randomUUID().toString(),
+                medicationId = medicationId,
+                medicationName = currentMedicationName,
+                hour = hour,
+                minute = minute,
+                repeatDays = repeatDays,
+                timing = timing,
+                soundEnabled = soundEnabled,
+                soundName = soundName,
+                vibrationEnabled = vibrationEnabled,
+                enabled = previous?.enabled ?: true,
+            ),
+        )
+        _state.update { it.copy(snackbar = if (previous == null) "복용 알람을 저장했습니다." else "복용 알람을 수정했습니다.") }
+        onSaved()
+    }
+
+    fun toggleMedicationAlarm(alarm: MedicationAlarm, enabled: Boolean) = viewModelScope.launch {
+        alarmRepository.setEnabled(alarm, enabled)
+    }
+
+    fun deleteMedicationAlarm(alarm: MedicationAlarm) = viewModelScope.launch {
+        alarmRepository.delete(alarm)
+        _state.update { it.copy(snackbar = "복용 알람을 삭제했습니다.") }
+    }
+
+    fun deleteMedicationAlarms(alarms: List<MedicationAlarm>, onDeleted: () -> Unit) = viewModelScope.launch {
+        alarms.forEach { alarmRepository.delete(it) }
+        _state.update { it.copy(snackbar = "선택한 ${alarms.size}개의 알람을 삭제했습니다.") }
+        onDeleted()
+    }
+
+    fun completeMedicationDose(alarmId: String) = viewModelScope.launch {
+        alarmRepository.markCompleted(alarmId)
+        _state.update { it.copy(snackbar = "복용 완료로 기록했습니다.") }
+    }
+
+    fun cancelMedicationDoseCompletion(alarmId: String) = viewModelScope.launch {
+        alarmRepository.markIncomplete(alarmId)
+        _state.update { it.copy(snackbar = "복용 완료를 취소했습니다.") }
     }
 
     fun refreshHome() = viewModelScope.launch {
@@ -96,6 +176,61 @@ class AppViewModel @Inject constructor(
             current.copy(
                 medications = medications,
                 selectedExisting = medications.filter { it.active }.map { it.id }.toSet(),
+            )
+        }
+    }
+
+    fun addManualMedication(
+        name: String,
+        productType: ProductType,
+        ingredientDescription: String,
+        startDate: String?,
+        endDate: String?,
+        intakeTiming: String,
+        timesPerDay: Int,
+        doseValue: Double,
+        doseUnit: String,
+        onSaved: () -> Unit,
+    ) = viewModelScope.launch {
+        val medication = repository.addManualMedication(
+            name, productType, ingredientDescription, startDate, endDate, intakeTiming, timesPerDay, doseValue, doseUnit,
+        )
+        _state.update { current ->
+            current.copy(
+                medications = (current.medications + medication).distinctBy { it.id },
+                selectedExisting = current.selectedExisting + medication.id,
+                snackbar = "복용약을 직접 추가했습니다.",
+            )
+        }
+        onSaved()
+    }
+
+    fun updateMedication(
+        medication: Medication,
+        name: String,
+        productType: ProductType,
+        ingredientDescription: String,
+        onSaved: () -> Unit,
+    ) = viewModelScope.launch {
+        val updated = repository.updateMedication(medication, name, productType, ingredientDescription)
+        alarmRepository.updateMedicationName(updated.id, updated.name)
+        _state.update { current ->
+            current.copy(
+                medications = current.medications.map { if (it.id == updated.id) updated else it },
+                snackbar = "복용약 정보를 수정했습니다.",
+            )
+        }
+        onSaved()
+    }
+
+    fun deleteMedication(medication: Medication) = viewModelScope.launch {
+        repository.deleteMedication(medication)
+        alarmRepository.disableForMedication(medication.id)
+        _state.update { current ->
+            current.copy(
+                medications = current.medications.filterNot { it.id == medication.id },
+                selectedExisting = current.selectedExisting - medication.id,
+                snackbar = "복용 목록에서 삭제하고 연결된 알람을 껐습니다.",
             )
         }
     }
@@ -122,6 +257,10 @@ class AppViewModel @Inject constructor(
 
     fun clearPhoto(front: Boolean) = _state.update {
         if (front) it.copy(frontPhoto = null) else it.copy(backPhoto = null)
+    }
+
+    fun resetComparisonCapture() = _state.update {
+        it.copy(frontPhoto = null, backPhoto = null, draft = null, newMedication = null, draftLoading = false)
     }
 
     fun submitPhotos(onReady: () -> Unit) = viewModelScope.launch {
@@ -224,7 +363,7 @@ class AppViewModel @Inject constructor(
 
     fun startAnalysis(onStarted: () -> Unit) = viewModelScope.launch {
         val added = _state.value.newMedication ?: return@launch
-        val existing = _state.value.medications.filter { it.id in _state.value.selectedExisting }
+        val existing = _state.value.medications.filter { it.active && it.id in _state.value.selectedExisting }
         if (existing.isEmpty()) return@launch
         _state.update { it.copy(interaction = LoadState.Loading) }
         val accepted = repository.createCheck(added, existing)
@@ -238,7 +377,7 @@ class AppViewModel @Inject constructor(
         delay(1_200)
         val accepted = _state.value.interactionAccepted ?: return@launch
         val added = _state.value.newMedication ?: return@launch
-        val existing = _state.value.medications.filter { it.id in _state.value.selectedExisting }
+        val existing = _state.value.medications.filter { it.active && it.id in _state.value.selectedExisting }
         runCatching { repository.check(accepted, added, existing) }
             .onSuccess {
                 _state.update { state -> state.copy(interaction = LoadState.Content(it)) }

@@ -41,14 +41,78 @@ class MedAssistRepository @Inject constructor(
         } else LoadState.Content(demoHome(), offline = true)
     }
 
-    suspend fun medications(): List<Medication> = runCatching { api.medications() }
-        .getOrElse {
+    suspend fun medications(): List<Medication> {
+        val primary = runCatching { api.medications() }.getOrElse {
             val home = demoHome()
             home.todayMedications + Medication(
                 "33333333-3333-3333-3333-333333333333", "오메가3 데모", ProductType.HEALTH_SUPPLEMENT,
                 ingredients = listOf(Ingredient("EPA 및 DHA", "omega3")), dose = "1캡슐", time = "13:00", timing = "식후",
             )
         }
+        val overrides = database.manualMedicationDao().all()
+        val hiddenIds = overrides.filterNot { it.active }.mapTo(hashSetOf()) { it.id }
+        val activeOverrides = overrides.filter { it.active }.map { it.toMedication() }
+        return (activeOverrides + primary.filterNot { it.id in hiddenIds }).distinctBy { it.id }
+    }
+
+    suspend fun addManualMedication(
+        name: String, productType: ProductType, ingredientDescription: String,
+        startDate: String?, endDate: String?, intakeTiming: String,
+        timesPerDay: Int, doseValue: Double, doseUnit: String,
+    ): Medication {
+        val medication = Medication(
+            id = "manual-${UUID.randomUUID()}",
+            name = name.trim(),
+            productType = productType,
+            ingredients = ingredientDescription.trim().takeIf { it.isNotBlank() }?.let {
+                listOf(Ingredient(displayName = it, normalizedName = it.lowercase()))
+            }.orEmpty(),
+            dose = "${doseValue.formatDose()}$doseUnit",
+            timing = intakeTiming,
+            startDate = startDate,
+            endDate = endDate,
+            timesPerDay = timesPerDay,
+            doseValue = doseValue,
+            doseUnit = doseUnit,
+        )
+        database.manualMedicationDao().upsert(
+            ManualMedicationEntity(
+                medication.id, medication.name, medication.productType.name, ingredientDescription.trim(), true,
+                startDate, endDate, intakeTiming, timesPerDay, doseValue, doseUnit,
+            ),
+        )
+        return medication
+    }
+
+    suspend fun updateMedication(original: Medication, name: String, productType: ProductType, ingredientDescription: String): Medication {
+        val updated = original.copy(
+            name = name.trim(),
+            productType = productType,
+            ingredients = ingredientDescription.trim().takeIf { it.isNotBlank() }?.let {
+                listOf(Ingredient(displayName = it, normalizedName = it.lowercase()))
+            }.orEmpty(),
+            active = true,
+        )
+        database.manualMedicationDao().upsert(
+            ManualMedicationEntity(
+                updated.id, updated.name, updated.productType.name, ingredientDescription.trim(), true,
+                updated.startDate, updated.endDate, updated.timing, updated.timesPerDay, updated.doseValue, updated.doseUnit,
+            ),
+        )
+        return updated
+    }
+
+    suspend fun deleteMedication(medication: Medication) {
+        database.manualMedicationDao().upsert(
+            ManualMedicationEntity(
+                medication.id,
+                medication.name,
+                medication.productType.name,
+                medication.ingredients.joinToString { it.displayName },
+                false,
+            ),
+        )
+    }
 
     suspend fun setDose(medication: Medication, taken: Boolean): Result<Medication> = runCatching {
         api.doseLog(
@@ -89,7 +153,7 @@ class MedAssistRepository @Inject constructor(
         Medication(
             id = "local-new-medication",
             name = draft.productName,
-            productType = ProductType.OTC_DRUG,
+            productType = ProductType.UNKNOWN,
             productCode = draft.productCode,
             manufacturer = draft.manufacturer,
             ingredients = draft.ingredients,
@@ -158,6 +222,24 @@ class MedAssistRepository @Inject constructor(
     private fun Medication.toCache() = CachedMedication(id, name, productType.name, dose, time, timing, taken, version)
     private fun CachedMedication.toMedication() = Medication(id, name, ProductType.valueOf(productType),
         dose = dose, time = time, timing = timing, taken = taken, version = version)
+    private fun ManualMedicationEntity.toMedication() = Medication(
+        id = id,
+        name = name,
+        productType = ProductType.valueOf(productType),
+        active = active,
+        ingredients = ingredientDescription.takeIf { it.isNotBlank() }?.let {
+            listOf(Ingredient(displayName = it, normalizedName = it.lowercase()))
+        }.orEmpty(),
+        dose = doseValue?.let { "${it.formatDose()}${doseUnit.orEmpty()}" },
+        timing = intakeTiming,
+        startDate = startDate,
+        endDate = endDate,
+        timesPerDay = timesPerDay,
+        doseValue = doseValue,
+        doseUnit = doseUnit,
+    )
+
+    private fun Double.formatDose(): String = if (this % 1.0 == 0.0) toInt().toString() else toString()
 
     private fun localCheck(added: Medication, existing: List<Medication>): InteractionCheck {
         val results = existing.map { current ->
