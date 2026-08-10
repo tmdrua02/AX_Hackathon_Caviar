@@ -73,8 +73,8 @@ object AppModule {
     private fun baseHttpClient(): OkHttpClient.Builder = OkHttpClient.Builder()
         .addInterceptor { chain ->
             val request = chain.request().newBuilder().apply {
-                if (BuildConfig.DEMO_API_TOKEN.isNotBlank()) {
-                    header("X-Demo-Api-Key", BuildConfig.DEMO_API_TOKEN)
+                validDemoApiToken(BuildConfig.DEMO_API_TOKEN)?.let { token ->
+                    header("X-Demo-Api-Key", token)
                 }
             }.build()
             chain.proceed(request)
@@ -85,6 +85,10 @@ object AppModule {
             redactHeader("X-Demo-Api-Key")
             redactHeader("X-Demo-User-Id")
         })
+
+    internal fun validDemoApiToken(value: String): String? = value.trim().takeIf { token ->
+        token.isNotEmpty() && token.all { it.code in 0x21..0x7E }
+    }
 
     @Provides
     @Singleton

@@ -65,6 +65,20 @@ class InteractionAnalysisPlannerTest {
     }
 
     @Test
+    fun `demo and mock identities are never sent as official drug requests`() {
+        val official = medication("official", "202106092")
+        val demo = medication("demo", "DEMO-1111")
+        val mockIngredient = medication("mock", "198601920").copy(
+            ingredients = listOf(Ingredient("이부프로펜", "ibuprofen", "MOCK")),
+        )
+
+        assertTrue(InteractionAnalysisPlanner.hasOfficialDrugIdentity(official))
+        assertFalse(InteractionAnalysisPlanner.hasOfficialDrugIdentity(demo))
+        assertFalse(InteractionAnalysisPlanner.hasOfficialDrugIdentity(mockIngredient))
+        assertTrue(InteractionAnalysisPlanner.officialDrugBatches(listOf(official, demo, mockIngredient)).isEmpty())
+    }
+
+    @Test
     fun `run guard rejects duplicate start until matching run finishes`() {
         val guard = InteractionAnalysisRunGuard()
 

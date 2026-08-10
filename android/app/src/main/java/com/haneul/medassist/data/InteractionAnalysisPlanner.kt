@@ -4,6 +4,12 @@ internal data class MedicationPair(val left: Medication, val right: Medication)
 
 /** Pure selection and pair planning rules shared by the UI and analysis request path. */
 internal object InteractionAnalysisPlanner {
+    fun hasOfficialDrugIdentity(medication: Medication): Boolean =
+        medication.productType != ProductType.HEALTH_SUPPLEMENT &&
+            !medication.productCode.isNullOrBlank() &&
+            !medication.productCode.startsWith("DEMO-", ignoreCase = true) &&
+            medication.ingredients.none { it.providerCode.equals("MOCK", ignoreCase = true) }
+
     fun selectedActiveMedications(
         medications: List<Medication>,
         selectedIds: Set<String>,
@@ -38,7 +44,7 @@ internal object InteractionAnalysisPlanner {
      */
     fun officialDrugBatches(selected: List<Medication>): List<Pair<Medication, List<Medication>>> {
         val officialDrugs = selected
-            .filter { it.active && it.productType != ProductType.HEALTH_SUPPLEMENT && !it.productCode.isNullOrBlank() }
+            .filter { it.active && hasOfficialDrugIdentity(it) }
             .distinctBy { it.id }
         return buildList {
             for (leftIndex in 0 until officialDrugs.lastIndex) {

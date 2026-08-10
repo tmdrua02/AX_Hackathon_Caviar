@@ -213,13 +213,15 @@ fun demoHome() = HomeResponse(
     counts = Counts(3, 1, 1),
     todayMedications = listOf(
         Medication(
-            "11111111-1111-1111-1111-111111111111", "타이레놀", ProductType.OTC_DRUG,
-            ingredients = listOf(Ingredient("아세트아미노펜", "acetaminophen")),
+            "11111111-1111-1111-1111-111111111111", "타이레놀정500밀리그람(아세트아미노펜)", ProductType.OTC_DRUG,
+            productCode = "202106092", manufacturer = "켄뷰코리아판매유한회사",
+            ingredients = listOf(Ingredient("아세트아미노펜", "acetaminophen", "M040353", 500.0, "밀리그램")),
             dose = "1정", time = "09:00", timing = "식후",
         ),
         Medication(
-            "22222222-2222-2222-2222-222222222222", "해열 시럽 A", ProductType.PRESCRIPTION_DRUG,
-            ingredients = listOf(Ingredient("이부프로펜", "ibuprofen")),
+            "22222222-2222-2222-2222-222222222222", "어린이부루펜시럽(이부프로펜)", ProductType.PRESCRIPTION_DRUG,
+            productCode = "198601920", manufacturer = "삼일제약(주)",
+            ingredients = listOf(Ingredient("이부프로펜", "ibuprofen", "M051259", 2.0, "그램")),
             dose = "10mL", time = "20:00", timing = "식후", taken = true,
         ),
     ),

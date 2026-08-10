@@ -41,10 +41,11 @@ internal object DrugInteractionUiMapper {
                     pair.right,
                     "현재 복용 목록에는 건강기능식품의 공식 신고번호가 저장되지 않아 약–건강기능식품 분석을 자동 실행할 수 없습니다. 건강기능식품 검색에서 공식 제품을 선택해 확인해 주세요.",
                 )
-                pair.left.productCode.isNullOrBlank() || pair.right.productCode.isNullOrBlank() -> unsupportedResult(
+                !InteractionAnalysisPlanner.hasOfficialDrugIdentity(pair.left) ||
+                    !InteractionAnalysisPlanner.hasOfficialDrugIdentity(pair.right) -> unsupportedResult(
                     pair.left,
                     pair.right,
-                    "공식 품목기준코드가 없는 제품이 포함되어 성분·DUR 분석을 실행할 수 없습니다.",
+                    "공식 품목기준코드 또는 공식 성분코드가 없는 제품이 포함되어 성분·DUR 분석을 실행할 수 없습니다.",
                 )
                 else -> mappedByPair[pairKey(pair.left, pair.right)] ?: unsupportedResult(
                     pair.left,
