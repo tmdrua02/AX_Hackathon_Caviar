@@ -106,7 +106,7 @@ object AppModule {
     @Singleton
     fun database(@ApplicationContext context: Context): MedAssistDatabase =
         Room.databaseBuilder(context, MedAssistDatabase::class.java, "med-assist.db")
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
             .build()
 
     private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -167,6 +167,22 @@ object AppModule {
             db.execSQL("ALTER TABLE `manual_medications` ADD COLUMN `timesPerDay` INTEGER")
             db.execSQL("ALTER TABLE `manual_medications` ADD COLUMN `doseValue` REAL")
             db.execSQL("ALTER TABLE `manual_medications` ADD COLUMN `doseUnit` TEXT")
+        }
+    }
+
+    private val MIGRATION_5_6 = object : Migration(5, 6) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """CREATE TABLE IF NOT EXISTS `saved_interaction_checks` (
+                    `id` TEXT NOT NULL,
+                    `jobId` TEXT NOT NULL,
+                    `analyzedAt` TEXT NOT NULL,
+                    `selectedProductsJson` TEXT NOT NULL,
+                    `resultsJson` TEXT NOT NULL,
+                    `savedAt` INTEGER NOT NULL,
+                    PRIMARY KEY(`id`)
+                )""".trimIndent(),
+            )
         }
     }
 }

@@ -230,21 +230,17 @@ fun InteractionListScreen(
         ) {
         item { Text("약 추가하기", style = MaterialTheme.typography.titleMedium) }
         item {
-            val added = state.newMedication
             Card(
-                modifier = Modifier.fillMaxWidth().clickable { if (state.newMedication == null) showAddIntro = true else showAddMethods = true },
+                modifier = Modifier.fillMaxWidth().clickable { showAddIntro = true },
                 shape = RoundedCornerShape(22.dp),
-                colors = CardDefaults.cardColors(containerColor = if (added == null) Color.White else Color(0xFFEAF6FF)),
-                border = androidx.compose.foundation.BorderStroke(2.dp, if (added == null) Color(0xFFCBD1D8) else Primary),
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                border = androidx.compose.foundation.BorderStroke(2.dp, Color(0xFFCBD1D8)),
             ) {
                 Row(Modifier.fillMaxWidth().padding(22.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(if (added == null) Icons.Default.AddAPhoto else Icons.Default.Medication, null, tint = Primary)
+                    Icon(Icons.Default.AddAPhoto, contentDescription = null, tint = Primary)
                     Column(Modifier.padding(start = 14.dp).weight(1f)) {
-                        Text(added?.name ?: "비교할 약을 추가해주세요", fontWeight = FontWeight.SemiBold)
-                        Text(if (added == null) "제품·처방전 앞면과 뒷면 촬영" else added.ingredients.joinToString { it.displayName }, color = Muted)
-                    }
-                    if (added != null) IconButton(onClick = { showAddMethods = true }) {
-                        Icon(Icons.Default.Edit, contentDescription = "인식 정보 다시 등록", tint = Primary)
+                        Text("비교할 약을 추가해주세요", fontWeight = FontWeight.SemiBold)
+                        Text("제품·처방전 앞면과 뒷면 촬영", color = Muted)
                     }
                 }
             }
@@ -264,7 +260,12 @@ fun InteractionListScreen(
                 }
             }
         }
-        item { Text("기존 복용 제품 ${state.medications.count { it.active }}", style = MaterialTheme.typography.titleMedium) }
+        item {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("기존 복용 제품 ${state.medications.count { it.active }}", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                Text("${selectedActiveIds.size}개 선택", color = if (selectedActiveIds.size >= 2) Primary else Muted)
+            }
+        }
         if (medicationGroups.isEmpty()) {
             item { EmptyCard("등록된 복용약이 없습니다.") }
         }
@@ -293,7 +294,7 @@ fun InteractionListScreen(
             }
         }
         }
-        item { InteractionStartButton(state.newMedication != null && selectedActiveIds.isNotEmpty(), onStart) }
+        item { InteractionStartButton(selectedActiveIds.size >= 2, onStart) }
         item { SafetyNotice("검색 결과 없음은 안전함을 뜻하지 않습니다. 근거가 부족하면 확인 불가로 표시합니다.") }
         }
     }
@@ -522,152 +523,9 @@ fun ReviewScreen(state: AppUiState, viewModel: AppViewModel, nav: NavHostControl
                     viewModel.confirmDraft { nav.popBackStack(Routes.INTERACTION, false) }
                 },
                 modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp), shape = RoundedCornerShape(18.dp),
-            ) { if (state.draftLoading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Text("확인하고 새 약 추가") }
+            ) { if (state.draftLoading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Text("복용 제품에 저장") }
         }
         item { SafetyNotice("제품이 확정되기 전에는 복용약 확인 분석을 시작하지 않습니다.") }
-    }
-}
-
-@Composable
-fun AnalyzingScreen(state: AppUiState, viewModel: AppViewModel, nav: NavHostController) {
-    var completed by remember { mutableStateOf(false) }
-    LaunchedEffect(state.interactionAccepted?.jobId) {
-        viewModel.finishAnalysis {
-            completed = true
-        }
-    }
-    LaunchedEffect(completed) {
-        if (completed) { delay(650); nav.navigate(Routes.RESULT) { popUpTo(Routes.ANALYZING) { inclusive = true } } }
-    }
-    Box(Modifier.fillMaxSize().statusBarsPadding().padding(28.dp), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(22.dp)) {
-            if (completed) {
-                Icon(Icons.Default.CheckCircle, contentDescription = "분석 완료", tint = Primary, modifier = Modifier.size(112.dp))
-                Text("분석이 완료되었습니다", style = MaterialTheme.typography.titleLarge)
-            } else if (state.interaction is LoadState.Error) {
-                Icon(Icons.Default.ErrorOutline, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(72.dp))
-                Text(state.interaction.message, color = MaterialTheme.colorScheme.error)
-                Button(onClick = { viewModel.finishAnalysis { completed = true } }) { Text("다시 시도") }
-                TextButton(onClick = { nav.popBackStack(Routes.INTERACTION, false) }) { Text("나중에 확인하기") }
-            } else {
-                CircularProgressIndicator(Modifier.size(92.dp), strokeWidth = 8.dp)
-                Text("잠시만 기다려 주세요", style = MaterialTheme.typography.titleLarge)
-                Text("성분 조합 점검중...", color = Muted)
-                Text("화면을 나가도 jobId로 분석 상태가 복원됩니다.", color = Muted, style = MaterialTheme.typography.bodyMedium)
-            }
-        }
-    }
-}
-
-@Composable
-fun ResultScreen(state: AppUiState, viewModel: AppViewModel, nav: NavHostController) {
-    val check = (state.interaction as? LoadState.Content)?.value
-    var detail by remember { mutableStateOf<InteractionResult?>(null) }
-    FixedBackHeaderScreen("복용약 확인 결과", nav, contentPadding = PaddingValues(20.dp)) {
-        if (check == null) item { ErrorCard("결과를 찾을 수 없습니다.") { nav.popBackStack() } }
-        else {
-            item {
-                InfoCard("비교 대상", listOf(
-                    "새로 추가한 약" to (state.newMedication?.name ?: "-"),
-                    "기존 복용 제품" to check.results.joinToString { it.existingMedication.name },
-                    "조회 범위" to "성분 ${check.coverage.identifiedIngredients}개 · 성공 ${check.coverage.successfulQueries} · 미확인 ${check.coverage.unidentifiedIngredients}",
-                ))
-            }
-            items(check.results, key = { it.id }) { result -> ResultCard(result) { detail = result } }
-            item { SafetyNotice(check.disclaimer) }
-            item {
-                Button(onClick = viewModel::saveInteraction, enabled = !check.saved, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp), shape = RoundedCornerShape(18.dp)) {
-                    Icon(if (check.saved) Icons.Default.Check else Icons.Default.Save, null)
-                    Spacer(Modifier.width(8.dp)); Text(if (check.saved) "저장됨" else "결과 저장")
-                }
-            }
-        }
-    }
-    detail?.let { ResultDetailDialog(it) { detail = null } }
-}
-
-@Composable
-private fun ResultCard(result: InteractionResult, onClick: () -> Unit) {
-    val color = when (result.severity) {
-        Severity.PROHIBITED -> Color(0xFFD94343)
-        Severity.CAUTION -> Color(0xFFF0A91D)
-        Severity.DUPLICATE_OR_SIMILAR -> Primary
-        Severity.NO_KNOWN_ISSUE -> Color(0xFF238A57)
-        Severity.UNKNOWN -> Color(0xFF7D858E)
-    }
-    Card(Modifier.fillMaxWidth().clickable(onClick = onClick), shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(containerColor = color.copy(alpha = 0.09f)),
-        border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = 0.45f))) {
-        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-                when (result.severity) {
-                    Severity.PROHIBITED -> "함께 복용하면 안 돼요!"
-                    Severity.CAUTION -> "복용 시 주의하세요"
-                    Severity.DUPLICATE_OR_SIMILAR -> "효능이 비슷해요!"
-                    Severity.NO_KNOWN_ISSUE -> "확인된 위험 정보가 없어요"
-                    Severity.UNKNOWN -> "전문가 확인이 필요해요"
-                },
-                style = MaterialTheme.typography.titleLarge,
-                color = color,
-            )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(if (result.severity == Severity.UNKNOWN) Icons.Default.HelpOutline else Icons.Default.HealthAndSafety, null, tint = color)
-                Text(result.title, Modifier.padding(start = 8.dp).weight(1f), fontWeight = FontWeight.Bold, color = color)
-                Icon(Icons.Default.ChevronRight, contentDescription = "상세 근거 보기")
-            }
-            Text("${result.newMedication.name} × ${result.existingMedication.name}", style = MaterialTheme.typography.titleMedium)
-            Text(result.easyExplanation, color = Muted)
-            if (result.evidence.isNotEmpty()) {
-                Text("관련 성분: ${result.evidence.joinToString { "${it.ingredientA} / ${it.ingredientB}" }}", style = MaterialTheme.typography.bodyMedium)
-                Text("출처: ${result.evidence.first().sourceName} · 기준일 ${result.evidence.first().sourceDate ?: "확인 필요"}", color = Muted, style = MaterialTheme.typography.bodyMedium)
-            }
-        }
-    }
-}
-
-@Composable
-private fun ResultDetailDialog(result: InteractionResult, onDismiss: () -> Unit) {
-    val context = LocalContext.current
-    val sourceUrl = result.evidence.firstOrNull()?.sourceUrl?.takeIf { it.startsWith("http") }
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(28.dp),
-            color = Color.White,
-            shadowElevation = 10.dp,
-        ) {
-            Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.FactCheck, null, tint = Primary)
-                    Text("판정 근거 상세", Modifier.padding(start = 10.dp).weight(1f), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = "상세 닫기") }
-                }
-                LazyColumn(Modifier.heightIn(max = 480.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    item { Text(result.easyExplanation, style = MaterialTheme.typography.titleMedium) }
-                    item {
-                        Text("관련 제품", fontWeight = FontWeight.Bold)
-                        Text("${result.newMedication.name} / ${result.existingMedication.name}", color = Muted)
-                    }
-                    if (result.evidence.isEmpty()) item {
-                        Text("공식 관계 데이터가 없어 원문 근거를 표시할 수 없습니다. 이는 안전하다는 의미가 아닙니다.", color = Muted)
-                    }
-                    items(result.evidence) { evidence ->
-                        HorizontalDivider()
-                        Text("관련 성분", fontWeight = FontWeight.Bold)
-                        Text("${evidence.ingredientA} ↔ ${evidence.ingredientB}")
-                        evidence.originalSummary?.let { Text(it) }
-                        Text("${evidence.sourceType} · ${evidence.sourceName}", color = Primary)
-                        Text("고시/수정일 ${evidence.sourceDate ?: "확인 필요"}", color = Muted, style = MaterialTheme.typography.bodyMedium)
-                    }
-                }
-                Button(
-                    onClick = { sourceUrl?.let { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(it))) } },
-                    enabled = sourceUrl != null,
-                    modifier = Modifier.fillMaxWidth().height(54.dp),
-                    shape = RoundedCornerShape(14.dp),
-                ) { Text(if (sourceUrl == null) "표시할 근거 출처 없음" else "근거 출처 보기", fontWeight = FontWeight.Bold) }
-            }
-        }
     }
 }
 
@@ -1123,7 +981,7 @@ private fun BackTitle(title: String, nav: NavHostController) {
 private fun SectionTitle(title: String) { Text(title, style = MaterialTheme.typography.titleLarge) }
 
 @Composable
-private fun SafetyNotice(text: String, modifier: Modifier = Modifier) {
+internal fun SafetyNotice(text: String, modifier: Modifier = Modifier) {
     Row(modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color(0xFFEAF6FF)).padding(14.dp), verticalAlignment = Alignment.Top) {
         Icon(Icons.Default.Info, null, tint = Primary, modifier = Modifier.size(20.dp)); Text(text, Modifier.padding(start = 8.dp), color = PrimaryDark, style = MaterialTheme.typography.bodyMedium)
     }
@@ -1133,10 +991,10 @@ private fun SafetyNotice(text: String, modifier: Modifier = Modifier) {
 private fun LoadingCard(text: String) { Card(colors = CardDefaults.cardColors(containerColor = SurfaceSoft), shape = RoundedCornerShape(18.dp)) { Row(Modifier.fillMaxWidth().padding(20.dp), verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 3.dp); Text(text, Modifier.padding(start = 14.dp)) } } }
 
 @Composable
-private fun EmptyCard(text: String) { Card(colors = CardDefaults.cardColors(containerColor = SurfaceSoft), shape = RoundedCornerShape(18.dp)) { Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.Inbox, null, tint = Muted); Spacer(Modifier.height(8.dp)); Text(text, color = Muted) } } }
+internal fun EmptyCard(text: String) { Card(colors = CardDefaults.cardColors(containerColor = SurfaceSoft), shape = RoundedCornerShape(18.dp)) { Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.Inbox, null, tint = Muted); Spacer(Modifier.height(8.dp)); Text(text, color = Muted) } } }
 
 @Composable
-private fun ErrorCard(text: String, retry: () -> Unit) { Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFFFEEEE)), shape = RoundedCornerShape(18.dp)) { Column(Modifier.fillMaxWidth().padding(18.dp)) { Text(text, color = Danger); TextButton(onClick = retry) { Text("다시 시도") } } } }
+internal fun ErrorCard(text: String, retry: () -> Unit) { Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFFFEEEE)), shape = RoundedCornerShape(18.dp)) { Column(Modifier.fillMaxWidth().padding(18.dp)) { Text(text, color = Danger); TextButton(onClick = retry) { Text("다시 시도") } } } }
 
 @Composable
 private fun FormField(label: String, value: String, onValueChange: (String) -> Unit) { OutlinedTextField(value, onValueChange, modifier = Modifier.fillMaxWidth(), label = { Text(label) }, singleLine = true, shape = RoundedCornerShape(14.dp)) }

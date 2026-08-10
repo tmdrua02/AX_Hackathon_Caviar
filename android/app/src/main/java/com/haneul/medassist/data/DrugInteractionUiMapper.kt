@@ -4,6 +4,88 @@ import java.time.Instant
 import java.util.UUID
 
 internal object DrugInteractionUiMapper {
+    data class BatchOutcome(
+        val reference: Medication,
+        val comparisons: List<Medication>,
+        val response: DrugInteractionBatchResponse? = null,
+        val failureMessage: String? = null,
+    )
+
+    fun mapSelected(
+        selected: List<Medication>,
+        outcomes: List<BatchOutcome>,
+    ): InteractionCheck {
+        val snapshot = selected.filter { it.active }.distinctBy { it.id }
+        val mappedByPair = linkedMapOf<String, InteractionResult>()
+        outcomes.forEach { outcome ->
+            if (outcome.response != null) {
+                map(outcome.response, outcome.reference, outcome.comparisons).results.forEach { result ->
+                    mappedByPair[pairKey(result.newMedication, result.existingMedication)] = result
+                }
+            } else {
+                outcome.comparisons.forEach { comparison ->
+                    mappedByPair[pairKey(outcome.reference, comparison)] = unsupportedResult(
+                        outcome.reference,
+                        comparison,
+                        outcome.failureMessage ?: "공식 성분·DUR 서버에서 이 제품 조합을 분석하지 못했습니다.",
+                    )
+                }
+            }
+        }
+
+        val results = InteractionAnalysisPlanner.allPairs(snapshot).map { pair ->
+            when {
+                pair.left.productType == ProductType.HEALTH_SUPPLEMENT ||
+                    pair.right.productType == ProductType.HEALTH_SUPPLEMENT -> unsupportedResult(
+                    pair.left,
+                    pair.right,
+                    "현재 복용 목록에는 건강기능식품의 공식 신고번호가 저장되지 않아 약–건강기능식품 분석을 자동 실행할 수 없습니다. 건강기능식품 검색에서 공식 제품을 선택해 확인해 주세요.",
+                )
+                pair.left.productCode.isNullOrBlank() || pair.right.productCode.isNullOrBlank() -> unsupportedResult(
+                    pair.left,
+                    pair.right,
+                    "공식 품목기준코드가 없는 제품이 포함되어 성분·DUR 분석을 실행할 수 없습니다.",
+                )
+                else -> mappedByPair[pairKey(pair.left, pair.right)] ?: unsupportedResult(
+                    pair.left,
+                    pair.right,
+                    "공식 분석 응답에서 이 제품 조합을 찾지 못했습니다. 안전하다는 의미가 아닙니다.",
+                )
+            }
+        }.distinctBy { pairKey(it.newMedication, it.existingMedication) }
+
+        val unknownCount = results.count { it.severity == Severity.UNKNOWN }
+        val remotePartial = outcomes.any { it.response?.processingStatus == "PARTIAL" }
+        val remoteFailed = outcomes.any { it.response?.processingStatus == "FAILED" || it.failureMessage != null }
+        val status = when {
+            results.isEmpty() -> "EMPTY"
+            unknownCount == results.size && remoteFailed -> "FAILED"
+            unknownCount == results.size -> "PARTIAL"
+            unknownCount > 0 || remotePartial || remoteFailed -> "PARTIAL"
+            else -> "COMPLETED"
+        }
+        val coverage = outcomes.mapNotNull { it.response?.coverage }
+        return InteractionCheck(
+            id = UUID.randomUUID().toString(),
+            jobId = UUID.randomUUID().toString(),
+            status = status,
+            results = results,
+            coverage = Coverage(
+                identifiedIngredients = snapshot.flatMap { it.ingredients }
+                    .map { it.normalizedName }.filter(String::isNotBlank).distinct().size,
+                successfulQueries = coverage.sumOf { it.completedIngredientPairs },
+                unidentifiedIngredients = coverage.sumOf { it.failedIngredientPairs } + unknownCount,
+                providerError = remoteFailed || coverage.any { it.failedComparisons > 0 },
+            ),
+            saved = false,
+            disclaimer = outcomes.mapNotNull { it.response?.disclaimer }.firstOrNull()
+                ?: "정보 제공용이며 복용을 시작·중단·변경하기 전에 의사 또는 약사와 상담하세요.",
+            analyzedMedications = snapshot,
+            analyzedAt = outcomes.mapNotNull { it.response?.analyzedAt }.maxOrNull()
+                ?: Instant.now().toString(),
+        )
+    }
+
     fun map(
         response: DrugInteractionBatchResponse?,
         added: Medication,
@@ -93,6 +175,9 @@ internal object DrugInteractionUiMapper {
         easyExplanation = reason,
         evidence = emptyList(),
     )
+
+    private fun pairKey(left: Medication, right: Medication): String =
+        listOf(left.id, right.id).sorted().joinToString("|")
 
     private fun title(severity: Severity): String = when (severity) {
         Severity.PROHIBITED -> "공식 DUR 병용금기 정보 확인"

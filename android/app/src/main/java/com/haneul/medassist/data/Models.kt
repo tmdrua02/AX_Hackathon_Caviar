@@ -146,7 +146,13 @@ data class InteractionCheck(
     val coverage: Coverage,
     val saved: Boolean,
     val disclaimer: String,
+    val analyzedMedications: List<Medication> = emptyList(),
+    val analyzedAt: String = "",
 )
+
+enum class InteractionAnalysisPhase { IDLE, RUNNING, SUCCEEDED, PARTIAL, EMPTY, FAILED }
+
+enum class InteractionSavePhase { IDLE, SAVING, SAVED, FAILED }
 
 @Serializable
 data class TranscriptSegment(

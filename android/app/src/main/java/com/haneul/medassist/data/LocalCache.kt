@@ -107,6 +107,25 @@ data class ManualMedicationEntity(
     val doseUnit: String? = null,
 )
 
+@Entity(tableName = "saved_interaction_checks")
+data class SavedInteractionCheckEntity(
+    @PrimaryKey val id: String,
+    val jobId: String,
+    val analyzedAt: String,
+    val selectedProductsJson: String,
+    val resultsJson: String,
+    val savedAt: Long,
+)
+
+@Dao
+interface SavedInteractionCheckDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(check: SavedInteractionCheckEntity)
+
+    @Query("SELECT * FROM saved_interaction_checks ORDER BY savedAt DESC")
+    suspend fun all(): List<SavedInteractionCheckEntity>
+}
+
 @Dao
 interface ManualMedicationDao {
     @Query("SELECT * FROM manual_medications ORDER BY name")
@@ -120,8 +139,9 @@ interface ManualMedicationDao {
 }
 
 @Database(
-    entities = [CachedMedication::class, MedicationAlarmEntity::class, MedicationDoseRecordEntity::class, ManualMedicationEntity::class],
-    version = 5,
+    entities = [CachedMedication::class, MedicationAlarmEntity::class, MedicationDoseRecordEntity::class,
+        ManualMedicationEntity::class, SavedInteractionCheckEntity::class],
+    version = 6,
     exportSchema = false,
 )
 abstract class MedAssistDatabase : RoomDatabase() {
@@ -129,4 +149,5 @@ abstract class MedAssistDatabase : RoomDatabase() {
     abstract fun medicationAlarmDao(): MedicationAlarmDao
     abstract fun medicationDoseRecordDao(): MedicationDoseRecordDao
     abstract fun manualMedicationDao(): ManualMedicationDao
+    abstract fun savedInteractionCheckDao(): SavedInteractionCheckDao
 }

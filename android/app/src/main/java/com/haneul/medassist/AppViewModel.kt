@@ -16,6 +16,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -23,6 +24,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.File
 import java.time.DayOfWeek
+import java.util.UUID
 import javax.inject.Inject
 
 data class RecordingUiState(
@@ -45,10 +47,12 @@ data class AppUiState(
     val frontPhoto: Uri? = null,
     val backPhoto: Uri? = null,
     val draft: PrescriptionDraft? = null,
-    val newMedication: Medication? = null,
     val draftLoading: Boolean = false,
-    val interactionAccepted: Accepted? = null,
     val interaction: LoadState<InteractionCheck> = LoadState.Idle,
+    val analysisPhase: InteractionAnalysisPhase = InteractionAnalysisPhase.IDLE,
+    val analysisRunId: String? = null,
+    val analysisSelection: List<Medication> = emptyList(),
+    val interactionSavePhase: InteractionSavePhase = InteractionSavePhase.IDLE,
     val drugSearch: LoadState<DrugProductSearchResponse> = LoadState.Idle,
     val supplementSearch: LoadState<SupplementProductSearchResponse> = LoadState.Idle,
     val selectedMedicationProductCode: String? = null,
@@ -78,6 +82,9 @@ class AppViewModel @Inject constructor(
     private var supplementSearchJob: Job? = null
     private var drugSearchJob: Job? = null
     private var supplementInteractionJob: Job? = null
+    private var interactionAnalysisJob: Job? = null
+    private var interactionSaveJob: Job? = null
+    private val interactionRunGuard = InteractionAnalysisRunGuard()
     private val supplementInteractionStateMachine = SupplementInteractionRequestStateMachine()
     private val amplitudeProcessor = AmplitudeProcessor()
     private var lastElapsedUiUpdateMs = 0L
@@ -177,7 +184,10 @@ class AppViewModel @Inject constructor(
         _state.update { current ->
             current.copy(
                 medications = medications,
-                selectedExisting = medications.filter { it.active }.map { it.id }.toSet(),
+                selectedExisting = InteractionAnalysisPlanner.reconcileSelection(
+                    medications,
+                    current.selectedExisting,
+                ),
             )
         }
     }
@@ -200,7 +210,10 @@ class AppViewModel @Inject constructor(
         _state.update { current ->
             current.copy(
                 medications = (current.medications + medication).distinctBy { it.id },
-                selectedExisting = current.selectedExisting + medication.id,
+                selectedExisting = InteractionAnalysisPlanner.reconcileSelection(
+                    current.medications + medication,
+                    current.selectedExisting,
+                ),
                 snackbar = "복용약을 직접 추가했습니다.",
             )
         }
@@ -249,6 +262,7 @@ class AppViewModel @Inject constructor(
     }
 
     fun toggleExisting(id: String) = _state.update { state ->
+        if (state.medications.none { it.id == id && it.active }) return@update state
         val selected = state.selectedExisting.toMutableSet().apply { if (!add(id)) remove(id) }
         state.copy(selectedExisting = selected)
     }
@@ -262,7 +276,7 @@ class AppViewModel @Inject constructor(
     }
 
     fun resetComparisonCapture() = _state.update {
-        it.copy(frontPhoto = null, backPhoto = null, draft = null, newMedication = null, draftLoading = false)
+        it.copy(frontPhoto = null, backPhoto = null, draft = null, draftLoading = false, drugSearch = LoadState.Idle)
     }
 
     fun submitPhotos(onReady: () -> Unit) = viewModelScope.launch {
@@ -298,19 +312,40 @@ class AppViewModel @Inject constructor(
 
     fun confirmDraft(onConfirmed: () -> Unit) = viewModelScope.launch {
         val draft = _state.value.draft ?: return@launch
+        if (_state.value.draftLoading) return@launch
         _state.update { it.copy(draftLoading = true) }
-        val medication = repository.confirmDraft(draft)
-        supplementInteractionJob?.cancel()
-        supplementInteractionStateMachine.reset()
-        _state.update {
-            it.copy(
-                newMedication = medication,
-                selectedMedicationProductCode = medication.productCode,
-                supplementInteraction = supplementInteractionStateMachine.state,
-                draftLoading = false,
-            )
-        }
-        onConfirmed()
+        runCatching { repository.confirmDraft(draft) }
+            .onSuccess { medication ->
+                supplementInteractionJob?.cancel()
+                supplementInteractionStateMachine.reset()
+                _state.update { current ->
+                    val medications = (current.medications + medication).distinctBy { it.id }
+                    current.copy(
+                        medications = medications,
+                        selectedExisting = InteractionAnalysisPlanner.reconcileSelection(
+                            medications,
+                            current.selectedExisting,
+                        ),
+                        frontPhoto = null,
+                        backPhoto = null,
+                        draft = null,
+                        drugSearch = LoadState.Idle,
+                        selectedMedicationProductCode = medication.productCode,
+                        supplementInteraction = supplementInteractionStateMachine.state,
+                        draftLoading = false,
+                        snackbar = "복용 제품에 저장했습니다. 분석할 제품을 직접 선택해 주세요.",
+                    )
+                }
+                onConfirmed()
+            }
+            .onFailure { error ->
+                _state.update {
+                    it.copy(
+                        draftLoading = false,
+                        snackbar = error.message ?: "복용 제품을 저장하지 못했습니다.",
+                    )
+                }
+            }
     }
 
     fun searchSupplementProducts(query: String) {
@@ -382,39 +417,115 @@ class AppViewModel @Inject constructor(
         return checkSupplementInteraction(medicationCode, supplementCode)
     }
 
-    fun startAnalysis(onStarted: () -> Unit) = viewModelScope.launch {
-        val added = _state.value.newMedication ?: return@launch
-        val existing = _state.value.medications.filter { it.active && it.id in _state.value.selectedExisting }
-        if (existing.isEmpty()) return@launch
-        _state.update { it.copy(interaction = LoadState.Loading) }
-        val accepted = repository.createCheck()
-        savedState["checkId"] = accepted.resourceId
-        savedState["jobId"] = accepted.jobId
-        _state.update { it.copy(interactionAccepted = accepted) }
+    fun startAnalysis(onStarted: () -> Unit) {
+        if (interactionAnalysisJob?.isActive == true || _state.value.analysisPhase == InteractionAnalysisPhase.RUNNING) return
+        val snapshot = InteractionAnalysisPlanner.selectedActiveMedications(
+            _state.value.medications,
+            _state.value.selectedExisting,
+        )
+        if (snapshot.size < 2) {
+            _state.update { it.copy(snackbar = "동시 복용을 확인할 활성 제품을 2개 이상 선택해 주세요.") }
+            return
+        }
+        launchAnalysis(snapshot, onStarted)
+    }
+
+    fun retryAnalysis() {
+        if (interactionAnalysisJob?.isActive == true) return
+        val snapshot = _state.value.analysisSelection
+        if (snapshot.size < 2) {
+            _state.update { it.copy(snackbar = "재시도할 분석 제품 정보를 찾을 수 없습니다.") }
+            return
+        }
+        launchAnalysis(snapshot) {}
+    }
+
+    fun cancelAnalysis() {
+        interactionAnalysisJob?.cancel()
+        interactionAnalysisJob = null
+        interactionRunGuard.cancel()
+        if (_state.value.analysisPhase == InteractionAnalysisPhase.RUNNING) {
+            _state.update {
+                it.copy(
+                    interaction = LoadState.Idle,
+                    analysisPhase = InteractionAnalysisPhase.IDLE,
+                    analysisRunId = null,
+                    analysisSelection = emptyList(),
+                )
+            }
+        }
+    }
+
+    private fun launchAnalysis(snapshot: List<Medication>, onStarted: () -> Unit) {
+        val runId = UUID.randomUUID().toString()
+        if (!interactionRunGuard.begin(runId)) return
+        savedState["analysisRunId"] = runId
+        _state.update {
+            it.copy(
+                interaction = LoadState.Loading,
+                analysisPhase = InteractionAnalysisPhase.RUNNING,
+                analysisRunId = runId,
+                analysisSelection = snapshot.map { medication -> medication.copy() },
+                interactionSavePhase = InteractionSavePhase.IDLE,
+            )
+        }
         onStarted()
-    }
-
-    fun finishAnalysis(onSuccess: () -> Unit) = viewModelScope.launch {
-        delay(1_200)
-        _state.value.interactionAccepted ?: return@launch
-        val added = _state.value.newMedication ?: return@launch
-        val existing = _state.value.medications.filter { it.active && it.id in _state.value.selectedExisting }
-        runCatching { repository.check(added, existing) }
-            .onSuccess {
-                _state.update { state -> state.copy(interaction = LoadState.Content(it)) }
-                onSuccess()
-            }
-            .onFailure { error ->
-                _state.update { state ->
-                    state.copy(interaction = LoadState.Error(error.message ?: "공식 성분·DUR 분석을 완료하지 못했습니다."))
+        interactionAnalysisJob = viewModelScope.launch {
+            runCatching { repository.checkSelected(snapshot) }
+                .onSuccess { check ->
+                    val phase = when {
+                        check.results.isEmpty() -> InteractionAnalysisPhase.EMPTY
+                        check.status == "PARTIAL" -> InteractionAnalysisPhase.PARTIAL
+                        check.status == "FAILED" -> InteractionAnalysisPhase.FAILED
+                        else -> InteractionAnalysisPhase.SUCCEEDED
+                    }
+                    _state.update { state ->
+                        state.copy(
+                            interaction = if (check.results.isEmpty()) LoadState.Empty else LoadState.Content(check),
+                            analysisPhase = phase,
+                        )
+                    }
                 }
-            }
+                .onFailure { error ->
+                    if (error is CancellationException) return@onFailure
+                    _state.update { state ->
+                        state.copy(
+                            interaction = LoadState.Error(error.message ?: "공식 성분·DUR 분석을 완료하지 못했습니다."),
+                            analysisPhase = InteractionAnalysisPhase.FAILED,
+                        )
+                    }
+                }
+            interactionRunGuard.finish(runId)
+            interactionAnalysisJob = null
+        }
     }
 
-    fun saveInteraction() = viewModelScope.launch {
-        val check = (_state.value.interaction as? LoadState.Content)?.value ?: return@launch
-        val saved = repository.saveCheck(check)
-        _state.update { it.copy(interaction = LoadState.Content(saved), snackbar = "결과를 기록에 저장했습니다.") }
+    fun saveInteraction() {
+        if (interactionSaveJob?.isActive == true || _state.value.interactionSavePhase == InteractionSavePhase.SAVING) return
+        val check = (_state.value.interaction as? LoadState.Content)?.value ?: return
+        if (check.saved) return
+        _state.update { it.copy(interactionSavePhase = InteractionSavePhase.SAVING) }
+        interactionSaveJob = viewModelScope.launch {
+            runCatching { repository.saveCheck(check) }
+                .onSuccess { saved ->
+                    _state.update {
+                        it.copy(
+                            interaction = LoadState.Content(saved),
+                            interactionSavePhase = InteractionSavePhase.SAVED,
+                            snackbar = "선택 제품과 분석 결과를 기록에 저장했습니다.",
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    _state.update {
+                        it.copy(
+                            interactionSavePhase = InteractionSavePhase.FAILED,
+                            snackbar = error.message ?: "결과를 저장하지 못했습니다. 다시 시도해 주세요.",
+                        )
+                    }
+                }
+            interactionSaveJob = null
+        }
     }
 
     fun loadConsultations() = viewModelScope.launch {
@@ -659,6 +770,9 @@ class AppViewModel @Inject constructor(
         supplementSearchJob?.cancel()
         drugSearchJob?.cancel()
         supplementInteractionJob?.cancel()
+        interactionAnalysisJob?.cancel()
+        interactionRunGuard.cancel()
+        interactionSaveJob?.cancel()
         recorder?.stop()
         super.onCleared()
     }

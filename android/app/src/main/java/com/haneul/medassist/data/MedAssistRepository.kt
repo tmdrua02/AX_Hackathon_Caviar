@@ -7,6 +7,7 @@ import com.haneul.medassist.di.MainHttpClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.MediaType.Companion.toMediaType
@@ -155,7 +156,7 @@ class MedAssistRepository @Inject constructor(
         api.confirmDraft(updated.id)
     }.getOrElse {
         Medication(
-            id = "local-new-medication",
+            id = "local-${UUID.randomUUID()}",
             name = draft.productName,
             productType = ProductType.UNKNOWN,
             productCode = draft.productCode,
@@ -185,7 +186,42 @@ class MedAssistRepository @Inject constructor(
         return DrugInteractionUiMapper.map(response, added, existing)
     }
 
-    suspend fun saveCheck(check: InteractionCheck): InteractionCheck = check.copy(saved = true)
+    suspend fun checkSelected(selected: List<Medication>): InteractionCheck {
+        val snapshot = selected.filter { it.active }.distinctBy { it.id }
+        require(snapshot.size >= 2) { "분석할 활성 복용 제품을 2개 이상 선택해 주세요." }
+        val outcomes = InteractionAnalysisPlanner.officialDrugBatches(snapshot).map { (reference, comparisons) ->
+            val referenceCode = requireNotNull(reference.productCode).trim()
+            drugInteractionRemoteDataSource.check(
+                referenceCode,
+                comparisons.mapNotNull { it.productCode?.trim()?.takeIf(String::isNotBlank) },
+            ).fold(
+                onSuccess = { DrugInteractionUiMapper.BatchOutcome(reference, comparisons, response = it) },
+                onFailure = {
+                    DrugInteractionUiMapper.BatchOutcome(
+                        reference,
+                        comparisons,
+                        failureMessage = it.message ?: "공식 성분·DUR 서버에 연결할 수 없습니다.",
+                    )
+                },
+            )
+        }
+        return DrugInteractionUiMapper.mapSelected(snapshot, outcomes)
+    }
+
+    suspend fun saveCheck(check: InteractionCheck): InteractionCheck {
+        val saved = check.copy(saved = true)
+        database.savedInteractionCheckDao().upsert(
+            SavedInteractionCheckEntity(
+                id = saved.id,
+                jobId = saved.jobId,
+                analyzedAt = saved.analyzedAt,
+                selectedProductsJson = json.encodeToString(saved.analyzedMedications),
+                resultsJson = json.encodeToString(saved.results),
+                savedAt = System.currentTimeMillis(),
+            ),
+        )
+        return saved
+    }
 
     suspend fun consultations(): Result<List<Consultation>> = runCatching { api.consultations() }
 
