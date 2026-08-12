@@ -1,18 +1,10 @@
 package com.haneul.medassist.ui
 
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Alarm
-import androidx.compose.material.icons.filled.FactCheck
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Medication
-import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
@@ -27,8 +19,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
@@ -42,8 +37,6 @@ import com.haneul.medassist.AppUiState
 import com.haneul.medassist.AppViewModel
 import com.haneul.medassist.R
 import com.haneul.medassist.ui.theme.Muted
-import com.haneul.medassist.ui.theme.Primary
-import com.haneul.medassist.ui.theme.PrimaryDark
 
 object Routes {
     const val HOME = "home"
@@ -67,14 +60,19 @@ object Routes {
     const val CHAT = "chat"
 }
 
-private data class Tab(val route: String, val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector)
+private data class Tab(
+    val route: String,
+    val label: String,
+    val selectedIconRes: Int,
+    val unselectedIconRes: Int,
+)
 
 private val tabs = listOf(
-    Tab(Routes.HOME, "홈", Icons.Default.Home),
-    Tab(Routes.ALARM, "복용알람", Icons.Default.Alarm),
-    Tab(Routes.INTERACTION_BASE, "복용약 확인", Icons.Default.Medication),
-    Tab(Routes.RECORDING, "진료녹음", Icons.Default.Mic),
-    Tab(Routes.RECORDS, "기록", Icons.Default.FactCheck),
+    Tab(Routes.HOME, "홈", R.drawable.nav_home_selected, R.drawable.nav_home_unselected),
+    Tab(Routes.ALARM, "복용알람", R.drawable.nav_alarm_selected, R.drawable.nav_alarm_unselected),
+    Tab(Routes.INTERACTION_BASE, "복용약 확인", R.drawable.nav_medication_selected, R.drawable.nav_medication_unselected),
+    Tab(Routes.RECORDING, "진료녹음", R.drawable.nav_recording_selected, R.drawable.nav_recording_unselected),
+    Tab(Routes.RECORDS, "기록", R.drawable.nav_records_selected, R.drawable.nav_records_unselected),
 )
 
 @Composable
@@ -97,15 +95,17 @@ fun MedAssistNavigation(state: AppUiState, viewModel: AppViewModel) {
                     onClick = { nav.navigate(Routes.CHAT) },
                     containerColor = Color.Transparent,
                     contentColor = Color.Unspecified,
-                    modifier = Modifier.size(68.dp),
+                    modifier = Modifier.requiredSize(width = 56.dp, height = 56.dp).offset(x = 8.dp, y = 8.dp),
                     elevation = androidx.compose.material3.FloatingActionButtonDefaults.elevation(0.dp, 0.dp, 0.dp, 0.dp),
                 ) {
-                    Image(
-                        painter = painterResource(R.drawable.medibot_pill_button),
-                        contentDescription = "메디봇 챗봇 열기",
-                        modifier = Modifier.size(86.dp),
-                        contentScale = ContentScale.Fit,
-                    )
+                    Box(Modifier.fillMaxSize().clip(CircleShape), contentAlignment = Alignment.Center) {
+                        Image(
+                            painter = painterResource(R.drawable.medibot_pill_button),
+                            contentDescription = "메디봇 챗봇 열기",
+                            modifier = Modifier.fillMaxSize().graphicsLayer(scaleX = 1.6f, scaleY = 1.6f),
+                            contentScale = ContentScale.Fit,
+                        )
+                    }
                 }
             }
         },
@@ -164,7 +164,18 @@ fun MedAssistNavigation(state: AppUiState, viewModel: AppViewModel) {
                 arguments = listOf(navArgument("mode") { type = NavType.StringType; defaultValue = "prescription" }),
             ) { entry -> CaptureScreen(state, viewModel, nav, entry.arguments?.getString("mode") ?: "prescription") }
             composable(Routes.OCR_LOADING) { OcrLoadingScreen(state, viewModel, nav) }
-            composable(Routes.REVIEW) { ReviewScreen(state, viewModel, nav) }
+            composable(Routes.REVIEW) {
+                ManualMedicationScreen(
+                    viewModel = viewModel,
+                    onBack = { nav.popBackStack() },
+                    title = "추가 정보 입력",
+                    initialDraft = state.draft,
+                    onSaved = {
+                        viewModel.resetComparisonCapture()
+                        nav.popBackStack(Routes.INTERACTION, false)
+                    },
+                )
+            }
             composable(Routes.ANALYZING) { AnalyzingScreen(state, viewModel, nav) }
             composable(Routes.RESULT) { ResultScreen(state, viewModel, nav) }
             composable(Routes.SUPPLEMENT_RESULT) { SupplementInteractionResultScreen(state, viewModel, nav) }
@@ -181,11 +192,11 @@ fun MedAssistNavigation(state: AppUiState, viewModel: AppViewModel) {
 @Composable
 private fun BottomBar(nav: NavHostController, current: String) {
     Box(
-        Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp),
+        Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 10.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center,
     ) {
         NavigationBar(
-            modifier = Modifier.fillMaxWidth().height(88.dp).shadow(8.dp, RoundedCornerShape(44.dp)).clip(RoundedCornerShape(44.dp)),
+            modifier = Modifier.fillMaxWidth().height(88.dp).shadow(10.dp, RoundedCornerShape(44.dp)).clip(RoundedCornerShape(44.dp)),
             containerColor = Color.White,
             tonalElevation = 0.dp,
         ) {
@@ -200,19 +211,30 @@ private fun BottomBar(nav: NavHostController, current: String) {
                         }
                     },
                     icon = {
-                        Box(
-                            Modifier.size(38.dp).clip(CircleShape).background(if (selected) Primary else Color.Transparent),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(tab.icon, contentDescription = tab.label, tint = if (selected) Color.White else Color(0xFFC3C6CE), modifier = Modifier.size(24.dp))
-                        }
+                        Image(
+                            painter = painterResource(if (selected) tab.selectedIconRes else tab.unselectedIconRes),
+                            contentDescription = tab.label,
+                            modifier = Modifier.size(28.dp),
+                            contentScale = ContentScale.Fit,
+                        )
                     },
-                    label = { androidx.compose.material3.Text(tab.label, maxLines = 1, softWrap = false, fontSize = 10.sp) },
+                    label = {
+                        androidx.compose.material3.Text(
+                            tab.label,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis,
+                            fontSize = 11.sp,
+                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                        )
+                    },
                     alwaysShowLabel = true,
                     colors = NavigationBarItemDefaults.colors(
-                        selectedTextColor = PrimaryDark,
+                        selectedIconColor = Color(0xFF222222),
+                        selectedTextColor = Color(0xFF222222),
                         indicatorColor = Color.Transparent,
-                        unselectedTextColor = Color(0xFFC3C6CE),
+                        unselectedIconColor = Color(0xFFC4C7CF),
+                        unselectedTextColor = Color(0xFFC4C7CF),
                     ),
                 )
             }

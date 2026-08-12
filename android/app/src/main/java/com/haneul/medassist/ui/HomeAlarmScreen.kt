@@ -118,6 +118,7 @@ fun HomeScreen(
                 TodayMedicationAlarmCard(
                     alarm = alarm,
                     dose = state.medications.firstOrNull { it.id == alarm.medicationId }?.dose,
+                    timing = state.medications.firstOrNull { it.id == alarm.medicationId }?.timing ?: alarm.timing,
                     completed = completed,
                     onComplete = { confirm = alarm to completed },
                 )
@@ -179,7 +180,7 @@ private fun HomeCountItem(label: String, value: Int, modifier: Modifier, emphasi
 }
 
 @Composable
-private fun TodayMedicationAlarmCard(alarm: MedicationAlarm, dose: String?, completed: Boolean, onComplete: () -> Unit) {
+private fun TodayMedicationAlarmCard(alarm: MedicationAlarm, dose: String?, timing: String, completed: Boolean, onComplete: () -> Unit) {
     val completedGreen = Color(0xFF238A57)
     Card(
         shape = RoundedCornerShape(22.dp),
@@ -188,7 +189,7 @@ private fun TodayMedicationAlarmCard(alarm: MedicationAlarm, dose: String?, comp
         Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                 Text(alarm.medicationName, style = MaterialTheme.typography.titleMedium, color = if (completed) Color(0xFF27272A) else Color.White)
-                Text(listOfNotNull(formatAlarmTime(alarm.hour, alarm.minute), dose, alarm.timing).joinToString("  |  "), color = if (completed) Muted else Color.White)
+                Text(listOfNotNull(formatAlarmTime(alarm.hour, alarm.minute), dose, timing).joinToString("  |  "), color = if (completed) Muted else Color.White)
                 Text(
                     if (completed) "복용 완료" else "복용 전",
                     color = if (completed) completedGreen else Color.White,
